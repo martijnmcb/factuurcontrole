@@ -59,4 +59,17 @@
         </table>
     </div>
 </div>
+{% if total_rows %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3">
+    <p class="mb-0 text-light-emphasis small">Toont {{ rows|length }} van {{ total_rows }} rijen. Pagina {{ page }} van {{ total_pages }}.</p>
+    <div class="d-flex gap-2">
+        {% if has_previous %}
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ previous_page }}">Vorige</a>
+        {% endif %}
+        {% if has_next %}
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ next_page }}">Volgende</a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
 {% endblock %}

@@ -20,7 +20,7 @@
             </div>
             <button type="submit" class="btn btn-outline-light">Apply</button>
         </form>
-        <a href="{% url 'client_drilldown' client.slug %}?stuurtabel_id={{ selected_run_id }}" class="btn btn-outline-light">Open drilldown</a>
+        <a href="{% url 'client_dashboard' client.slug %}?stuurtabel_id={{ selected_run_id }}&export=xlsx" class="btn btn-outline-light">Export</a>
     </div>
 </div>
 

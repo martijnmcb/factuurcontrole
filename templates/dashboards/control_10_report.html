@@ -87,7 +87,11 @@
 <div class="panel p-4 mt-4">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h2 class="h5 mb-0">Route details</h2>
-        <span class="text-light-emphasis small">{{ selected_route_key|default:"Geen route" }}</span>
+        <div class="d-flex align-items-center gap-2">
+            <span class="text-light-emphasis small">{{ selected_route_key|default:"Geen route" }}</span>
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}export=csv">Export CSV</a>
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}export=xlsx">Export XLSX</a>
+        </div>
     </div>
     <div class="table-responsive">
         <table class="table table-dark table-striped align-middle mb-0 report-table">
@@ -142,6 +146,19 @@
         </table>
     </div>
 </div>
+{% if total_rows %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3">
+    <p class="mb-0 text-light-emphasis small">Toont {{ route_detail_rows|length }} van {{ total_rows }} rijen. Pagina {{ page }} van {{ total_pages }}.</p>
+    <div class="d-flex gap-2">
+        {% if has_previous %}
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ previous_page }}">Vorige</a>
+        {% endif %}
+        {% if has_next %}
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ next_page }}">Volgende</a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
 
 {{ actual_points|json_script:"actual-route-points" }}
 {{ replanned_points|json_script:"replanned-route-points" }}

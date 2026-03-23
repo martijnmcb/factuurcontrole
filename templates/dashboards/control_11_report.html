@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block title %}{{ client.name }} {{ control_title }}{% endblock %}
+{% block main_class %}container-fluid px-4 px-xl-5{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+    <div>
+        <p class="eyebrow mb-2">Control Report</p>
+        <h1 class="display-6 mb-1">{{ control_title }}</h1>
+        <p class="text-light-emphasis mb-0">{{ client.name }}</p>
+    </div>
+    <div class="d-flex gap-2 align-items-end flex-wrap">
+        <form method="get" class="d-flex gap-2 align-items-end">
+            <div>
+                <label for="stuurtabel_id" class="form-label small text-light-emphasis mb-1">Stuurtabel ID</label>
+                <select id="stuurtabel_id" name="stuurtabel_id" class="form-select" onchange="this.form.submit()">
+                    {% for run in available_run_ids %}
+                        <option value="{{ run.stuurtabel_id }}" {% if run.stuurtabel_id == selected_run_id %}selected{% endif %}>{{ run.stuurtabel_id }}{% if run.soortvervoer %} [{{ run.soortvervoer }}]{% endif %}{% if run.omschrijving %} - {{ run.omschrijving }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </form>
+        <a href="{% url 'client_dashboard' client.slug %}?stuurtabel_id={{ selected_run_id }}" class="btn btn-outline-light">Back to dashboard</a>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="metric-card h-100">
+            <span>Aantal geteste ritten</span>
+            <strong>{{ summary.total_checked }}</strong>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="metric-card h-100">
+            <span>Afwijkingen emissieklasse</span>
+            <strong>{{ summary.total_deviations }}</strong>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="metric-card h-100">
+            <span>Dekking</span>
+            <strong>{{ summary.deviation_percentage }}%</strong>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="panel h-100">
+            <p class="eyebrow mb-2">Uitleg controle</p>
+            <p class="mb-0 text-light-emphasis">{{ control_explanation }}</p>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-xl-7">
+        <div class="panel p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h5 mb-0">Inzet voertuigen per emissieklasse</h2>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="text-light-emphasis small">{{ class_rows|length }} klassen</span>
+                    <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}export=csv&table=classes">Export CSV</a>
+                    <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}export=xlsx&table=classes">Export XLSX</a>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-dark table-striped align-middle mb-0 report-table">
+                    <thead>
+                        <tr>
+                            <th>Emissieklasse</th>
+                            <th>Aantal voertuigen</th>
+                            <th>Aandeel ritten</th>
+                    <th>clientKM</th>
+                    <th>Aandeel clientKM</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in class_rows %}
+                            <tr>
+                                <td>{{ row.emission_class }}</td>
+                                <td>{{ row.vehicles }}</td>
+                                <td>
+                                    <div class="d-flex align-items-center gap-3">
+                                        <div class="flex-grow-1 rounded-pill overflow-hidden" style="height: 10px; background: rgba(255,255,255,0.08);">
+                                            <div style="height: 10px; width: {{ row.ride_percentage }}%; background: linear-gradient(90deg, #bd9a44, #f1d48c);"></div>
+                                        </div>
+                                        <span>{{ row.ride_percentage }}%</span>
+                                    </div>
+                                </td>
+                                <td>{% if kilometer_available %}{{ row.client_km|floatformat:0 }}{% else %}-{% endif %}</td>
+                                <td>
+                                    {% if kilometer_available and row.client_km_percentage is not None %}
+                                        <div class="d-flex align-items-center gap-3">
+                                            <div class="flex-grow-1 rounded-pill overflow-hidden" style="height: 10px; background: rgba(255,255,255,0.08);">
+                                                <div style="height: 10px; width: {{ row.client_km_percentage }}%; background: linear-gradient(90deg, #7dc3b4, #c9f0e8);"></div>
+                                            </div>
+                                            <span>{{ row.client_km_percentage }}%</span>
+                                        </div>
+                                    {% else %}
+                                        <span class="text-light-emphasis">Niet beschikbaar</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% empty %}
+                            <tr>
+                                <td colspan="5" class="text-center text-light-emphasis">Geen emissieklassen gevonden voor deze stuurtabel.</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-5">
+        <div class="panel p-4 h-100">
+            <p class="eyebrow mb-2">Kerncijfers</p>
+            <div class="d-grid gap-3">
+                <div class="metric-card">
+                    <span>Unieke voertuigen met emissieklasse</span>
+                    <strong>{{ total_rows }}</strong>
+                </div>
+                <div class="metric-card">
+                    <span>Ritten met emissieklasse</span>
+                    <strong>{{ classified_rides }}</strong>
+                </div>
+                <div class="metric-card">
+                    <span>clientKM verdeling</span>
+                    <strong>{% if kilometer_available %}Beschikbaar{% else %}Nog niet beschikbaar{% endif %}</strong>
+                </div>
+            </div>
+            {% if not kilometer_available %}
+                <p class="small text-light-emphasis mt-3 mb-0">
+                    `clientKM` wordt nu berekend uit ride-level kilometercomponenten in `ritten_detail`. Voor deze stuurtabel zijn die velden nog leeg, waardoor het aandeel clientKM nog niet getoond kan worden.
+                </p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="panel p-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="h5 mb-0">Voertuigen</h2>
+        <div class="d-flex align-items-center gap-2">
+            <span class="text-light-emphasis small">100 per pagina</span>
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}export=csv&table=vehicles">Export CSV</a>
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}export=xlsx&table=vehicles">Export XLSX</a>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped align-middle mb-0 report-table">
+            <thead>
+                <tr>
+                    <th>Kenteken</th>
+                    <th>Emissieklasse</th>
+                    <th>Inzetdagen</th>
+                    <th>Routes</th>
+                    <th>Ritten</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in vehicle_rows %}
+                    <tr>
+                        <td>{{ row.kenteken }}</td>
+                        <td>{{ row.emission_class }}</td>
+                        <td>{{ row.inzetdagen }}</td>
+                        <td>{{ row.routes }}</td>
+                        <td>{{ row.rides }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center text-light-emphasis">Geen voertuigen gevonden voor deze stuurtabel.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% if total_rows %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3">
+    <p class="mb-0 text-light-emphasis small">Toont {{ vehicle_rows|length }} van {{ total_rows }} voertuigen. Pagina {{ page }} van {{ total_pages }}.</p>
+    <div class="d-flex gap-2">
+        {% if has_previous %}
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ previous_page }}">Vorige</a>
+        {% endif %}
+        {% if has_next %}
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ next_page }}">Volgende</a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

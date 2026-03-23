@@ -91,6 +91,12 @@ LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Europe/Amsterdam"
 USE_I18N = True
 USE_TZ = True
+DATE_FORMAT = "d-m-Y"
+SHORT_DATE_FORMAT = "d-m-Y"
+TIME_FORMAT = "H:i"
+SHORT_TIME_FORMAT = "H:i"
+DATETIME_FORMAT = "d-m-Y H:i"
+SHORT_DATETIME_FORMAT = "d-m-Y H:i"
 
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [PROJECT_DIR / "static"]
