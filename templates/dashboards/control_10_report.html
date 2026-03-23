@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+
+{% block title %}{{ client.name }} {{ control_title }}{% endblock %}
+{% block main_class %}container-fluid px-4 px-xl-5{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+    <div>
+        <p class="eyebrow mb-2">Control Report</p>
+        <h1 class="display-6 mb-1">{{ control_title }}</h1>
+        <p class="text-light-emphasis mb-0">{{ client.name }}</p>
+    </div>
+    <div class="d-flex gap-2 align-items-end flex-wrap">
+        <form method="get" class="d-flex gap-2 align-items-end flex-wrap">
+            <div>
+                <label for="stuurtabel_id" class="form-label small text-light-emphasis mb-1">Stuurtabel ID</label>
+                <select id="stuurtabel_id" name="stuurtabel_id" class="form-select" onchange="this.form.submit()">
+                    {% for run in available_run_ids %}
+                        <option value="{{ run.stuurtabel_id }}" {% if run.stuurtabel_id == selected_run_id %}selected{% endif %}>{{ run.stuurtabel_id }}{% if run.soortvervoer %} [{{ run.soortvervoer }}]{% endif %}{% if run.omschrijving %} - {{ run.omschrijving }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="route_nummer" class="form-label small text-light-emphasis mb-1">Route</label>
+                <select id="route_nummer" name="route_key" class="form-select" onchange="this.form.submit()">
+                    {% for route in route_options %}
+                        <option value="{{ route.route_key }}" {% if route.route_key == selected_route_key %}selected{% endif %}>{{ route.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </form>
+        <a href="{% url 'client_dashboard' client.slug %}?stuurtabel_id={{ selected_run_id }}" class="btn btn-outline-light">Back to dashboard</a>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="metric-card h-100">
+            <span>Aantal geteste routes</span>
+            <strong>{{ summary.total_checked }}</strong>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="metric-card h-100">
+            <span>Herplanning sneller</span>
+            <strong>{{ summary.total_deviations }}</strong>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="metric-card h-100">
+            <span>Percentage uitval</span>
+            <strong>{{ summary.deviation_percentage }}%</strong>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="panel h-100">
+            <p class="eyebrow mb-2">Uitleg controle</p>
+            <p class="mb-0 text-light-emphasis">{{ control_explanation }}</p>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-xl-6">
+        <div class="panel p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h5 mb-0">Werkelijke route</h2>
+                <span class="text-light-emphasis small">{{ selected_route_key|default:"Geen route" }}</span>
+            </div>
+            <div id="actualRouteMap" class="route-map" data-points-id="actual-route-points"></div>
+        </div>
+    </div>
+    <div class="col-xl-6">
+        <div class="panel p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h5 mb-0">Herplande route</h2>
+                <span class="text-light-emphasis small">{{ selected_route_key|default:"Geen route" }}</span>
+            </div>
+            <div id="replannedRouteMap" class="route-map" data-points-id="replanned-route-points"></div>
+        </div>
+    </div>
+</div>
+
+<div class="panel p-4 mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="h5 mb-0">Route details</h2>
+        <span class="text-light-emphasis small">{{ selected_route_key|default:"Geen route" }}</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped align-middle mb-0 report-table">
+            <thead>
+                <tr>
+                    <th>Datum</th>
+                    <th>KlantNummer</th>
+                    <th>ReizigerNaam</th>
+                    <th>Geplande instap</th>
+                    <th>Locatie van</th>
+                    <th>Postcode van</th>
+                    <th>Geplande uitstap</th>
+                    <th>Locatie naar</th>
+                    <th>Postcode naar</th>
+                    <th>Geplande reistijd</th>
+                    <th>Besteld aankomst</th>
+                    <th>Besteld vertrek</th>
+                    <th>Netto instap</th>
+                    <th>Netto uitstap</th>
+                    <th>Herplan instap</th>
+                    <th>Herplan uitstap</th>
+                    <th>Vervoerder</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in route_detail_rows %}
+                    <tr>
+                        <td>{{ row.0|date:"d-m-Y"|default_if_none:"" }}</td>
+                        <td>{{ row.1|default_if_none:"" }}</td>
+                        <td>{{ row.2|default_if_none:"" }}</td>
+                        <td>{{ row.3|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.4|default_if_none:"" }}</td>
+                        <td>{{ row.5|default_if_none:"" }}</td>
+                        <td>{{ row.6|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.7|default_if_none:"" }}</td>
+                        <td>{{ row.8|default_if_none:"" }}</td>
+                        <td>{{ row.9|default_if_none:"" }}</td>
+                        <td>{{ row.10|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.11|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.12|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.13|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.14|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.15|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.16|default_if_none:"" }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="17" class="text-center text-light-emphasis">No route detail rows found.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{{ actual_points|json_script:"actual-route-points" }}
+{{ replanned_points|json_script:"replanned-route-points" }}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+    if (typeof L === "undefined") {
+        return;
+    }
+
+    const mapConfigs = [
+        { elementId: "actualRouteMap", scriptId: "actual-route-points", color: "#d62828" },
+        { elementId: "replannedRouteMap", scriptId: "replanned-route-points", color: "#111111" },
+    ];
+
+    mapConfigs.forEach((config) => {
+        const node = document.getElementById(config.elementId);
+        const scriptNode = document.getElementById(config.scriptId);
+        if (!node || !scriptNode) {
+            return;
+        }
+
+        const points = JSON.parse(scriptNode.textContent || "[]");
+        const map = L.map(node, { scrollWheelZoom: false });
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            attribution: "&copy; OpenStreetMap contributors",
+            referrerPolicy: "strict-origin-when-cross-origin",
+        }).addTo(map);
+
+        if (!points.length) {
+            map.setView([52.35, 5.75], 10);
+            return;
+        }
+
+        const latLngs = points.map((point) => [point.lat, point.lng]);
+        L.polyline(latLngs, { color: config.color, weight: 4, opacity: 0.85 }).addTo(map);
+
+        points.forEach((point) => {
+            const marker = L.circleMarker([point.lat, point.lng], {
+                radius: 6,
+                color: config.color,
+                weight: 2,
+                fillColor: "#081420",
+                fillOpacity: 0.95,
+            }).addTo(map);
+            marker.bindPopup(`<strong>${point.index}. ${point.event_type}</strong><br>${point.label}<br>${point.time}`);
+        });
+
+        map.fitBounds(latLngs, { padding: [24, 24] });
+    });
+});
+</script>
+{% endblock %}

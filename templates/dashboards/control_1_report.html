@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block title %}{{ client.name }} {{ control_title }}{% endblock %}
+{% block main_class %}container-fluid px-4 px-xl-5{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+    <div>
+        <p class="eyebrow mb-2">Control Report</p>
+        <h1 class="display-6 mb-1">{{ control_title }}</h1>
+        <p class="text-light-emphasis mb-0">{{ client.name }}</p>
+    </div>
+    <div class="d-flex gap-2 align-items-end flex-wrap">
+        <form method="get" class="d-flex gap-2 align-items-end">
+            <div>
+                <label for="stuurtabel_id" class="form-label small text-light-emphasis mb-1">Stuurtabel ID</label>
+                <select id="stuurtabel_id" name="stuurtabel_id" class="form-select">
+                    {% for run in available_run_ids %}
+                        <option value="{{ run.stuurtabel_id }}" {% if run.stuurtabel_id == selected_run_id %}selected{% endif %}>{{ run.stuurtabel_id }}{% if run.soortvervoer %} [{{ run.soortvervoer }}]{% endif %}{% if run.omschrijving %} - {{ run.omschrijving }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-outline-light">Apply</button>
+        </form>
+        <a href="{% url 'client_dashboard' client.slug %}?stuurtabel_id={{ selected_run_id }}" class="btn btn-outline-light">Back to dashboard</a>
+    </div>
+</div>
+
+{% if template_variant == "control_1" %}
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="metric-card h-100">
+            <span>Aantal geteste ritten</span>
+            <strong>{{ summary.total_checked }}</strong>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="metric-card h-100">
+            <span>Geen geldige bestelling in SmartWheels</span>
+            <strong>{{ summary.total_deviations }}</strong>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="metric-card h-100">
+            <span>Percentage uitval</span>
+            <strong>{{ summary.deviation_percentage }}%</strong>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel h-100">
+            <p class="eyebrow mb-2">Uitleg controle</p>
+            <p class="mb-0 text-light-emphasis">{{ control_explanation }}</p>
+        </div>
+    </div>
+</div>
+
+<div class="panel p-4">
+    <div class="table-responsive">
+        <table class="table table-dark table-striped align-middle mb-0 report-table">
+            <thead>
+                <tr>
+                    <th>Datum</th>
+                    <th>KlantNummer</th>
+                    <th>ReizigerNaam</th>
+                    <th>Locatie van</th>
+                    <th>Postcode van</th>
+                    <th>Vertrek</th>
+                    <th>Locatie naar</th>
+                    <th>Postcode naar</th>
+                    <th>Aankomst</th>
+                    <th>Match</th>
+                    <th>Ritprijs</th>
+                    <th>StatusRit</th>
+                    <th>Rout</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                    <tr>
+                        <td>{{ row.0|date:"d-m-Y"|default_if_none:"" }}</td>
+                        <td>{{ row.1|default_if_none:"" }}</td>
+                        <td>{{ row.2|default_if_none:"" }}</td>
+                        <td>{{ row.3|default_if_none:"" }}</td>
+                        <td>{{ row.4|default_if_none:"" }}</td>
+                        <td>{{ row.5|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.6|default_if_none:"" }}</td>
+                        <td>{{ row.7|default_if_none:"" }}</td>
+                        <td>{{ row.8|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.9|default_if_none:"" }}</td>
+                        <td>{{ row.10|default_if_none:"" }}</td>
+                        <td>{{ row.11|default_if_none:"" }}</td>
+                        <td>{{ row.12|default_if_none:"" }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="13" class="text-center text-light-emphasis">No rows found for this control and stuurtabel.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% elif template_variant == "control_8" %}
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="metric-card h-100">
+            <span>Aantal geteste ritten</span>
+            <strong>{{ summary.total_checked }}</strong>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="metric-card h-100">
+            <span>Overschrijden max reistijd</span>
+            <strong>{{ summary.total_deviations }}</strong>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="metric-card h-100">
+            <span>Percentage uitval</span>
+            <strong>{{ summary.deviation_percentage }}%</strong>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel h-100">
+            <p class="eyebrow mb-2">Uitleg controle</p>
+            <p class="mb-0 text-light-emphasis">{{ control_explanation }}</p>
+        </div>
+    </div>
+</div>
+
+<div class="panel p-4">
+    <div class="table-responsive">
+        <table class="table table-dark table-striped align-middle mb-0 report-table">
+            <thead>
+                <tr>
+                    <th>Ritdatum</th>
+                    <th>KlantNummer</th>
+                    <th>ReizigerNaam</th>
+                    <th>Locatie van</th>
+                    <th>Locatie naar</th>
+                    <th>Geplande Instap</th>
+                    <th>Geplande Uitstap</th>
+                    <th>Max reistijd</th>
+                    <th>Geplande reistijd</th>
+                    <th>Overschrijding</th>
+                    <th>Realisatie in</th>
+                    <th>Realisatie uit</th>
+                    <th>RealReisTijd</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                    <tr>
+                        <td>{{ row.0|date:"d-m-Y"|default_if_none:"" }}</td>
+                        <td>{{ row.1|default_if_none:"" }}</td>
+                        <td>{{ row.2|default_if_none:"" }}</td>
+                        <td>{{ row.3|default_if_none:"" }}</td>
+                        <td>{{ row.4|default_if_none:"" }}</td>
+                        <td>{{ row.5|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.6|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.7|default_if_none:"" }}</td>
+                        <td>{{ row.8|default_if_none:"" }}</td>
+                        <td>{{ row.9|default_if_none:"" }}</td>
+                        <td>{{ row.10|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.11|time:"H:i"|default_if_none:"" }}</td>
+                        <td>{{ row.12|default_if_none:"" }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="13" class="text-center text-light-emphasis">No rows found for this control and stuurtabel.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="panel p-4">
+    <p class="eyebrow mb-2">Nog Niet Uitgewerkt</p>
+    <p class="mb-0 text-light-emphasis">Deze controle heeft nog geen eigen detailrapport. De route is al beschikbaar zodat we controles stapsgewijs kunnen uitwerken.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}{{ client.name }} Dashboard{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+    <div>
+        <p class="eyebrow mb-2">{{ client.slug }}</p>
+        <h1 class="display-6 mb-1">{{ client.name }}</h1>
+    </div>
+    <div class="d-flex gap-2 align-items-end flex-wrap">
+        <form method="get" class="d-flex gap-2 align-items-end">
+            <div>
+                <label for="stuurtabel_id" class="form-label small text-light-emphasis mb-1">Stuurtabel ID</label>
+                <select id="stuurtabel_id" name="stuurtabel_id" class="form-select">
+                    {% for run in available_run_ids %}
+                        <option value="{{ run.stuurtabel_id }}" {% if run.stuurtabel_id == selected_run_id %}selected{% endif %}>{{ run.stuurtabel_id }}{% if run.soortvervoer %} [{{ run.soortvervoer }}]{% endif %}{% if run.omschrijving %} - {{ run.omschrijving }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-outline-light">Apply</button>
+        </form>
+        <a href="{% url 'client_drilldown' client.slug %}?stuurtabel_id={{ selected_run_id }}" class="btn btn-outline-light">Open drilldown</a>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-6 col-xl-3"><div class="metric-card"><span>Total checked</span><strong>{{ metrics.total_checked }}</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="metric-card"><span>Total deviations</span><strong>{{ metrics.total_deviations }}</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="metric-card"><span>Deviation %</span><strong>{{ metrics.deviation_percentage }}%</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="metric-card"><span>Deviation amount</span><strong>{{ metrics.deviation_amount }}</strong></div></div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="panel p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h5 mb-0">Deviations per control</h2>
+                <span class="text-light-emphasis small">Stuurtabel {{ selected_run_id }}</span>
+            </div>
+            <canvas
+                id="controlBreakdownChart"
+                data-labels='[{% for row in control_breakdown %}"{{ row.0 }}"{% if not forloop.last %}, {% endif %}{% endfor %}]'
+                data-values='[{% for row in control_breakdown %}{{ row.1 }}{% if not forloop.last %}, {% endif %}{% endfor %}]'
+            ></canvas>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="panel p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h5 mb-0">Executed controls</h2>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                {% for control in executed_controls %}
+                    {% if control.control_id %}
+                        <a class="badge text-bg-light text-decoration-none" href="{% url 'control_report' client.slug control.control_id %}?stuurtabel_id={{ selected_run_id }}">{{ control.label }}</a>
+                    {% else %}
+                        <span class="badge text-bg-light">{{ control.label }}</span>
+                    {% endif %}
+                {% empty %}
+                    <p class="text-light-emphasis mb-0">No executed controls in local Parquet data yet.</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
