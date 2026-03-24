@@ -1,36 +1,36 @@
 # Factuurcontrole Platform
 
-Factuurcontrole Platform is a Django-based replacement for the existing Power BI invoice-control dashboards. It synchronizes client-specific SQL Server control data into Parquet, queries that data with DuckDB, and serves dashboards and control detail pages through Django templates.
+Factuurcontrole Platform is a Django-based replacement for the current Power BI invoice-control reporting. It synchronizes SQL Server control data per client into Parquet, queries that data with DuckDB, and serves dashboards and control reports through Django templates.
 
 ## Purpose And Scope
 
-- Read invoice-control data per client from SQL Server
-- Keep current and history Parquet datasets per client
-- Support both:
-  - `RG` runs via `gecontroleerdeRittenDetail` and `gecontroleerdeRoutesDetail`
-  - `VA` runs via `gecontroleerdeVARittenDetail`
-- Use `stuurtabel2_last` as the current-run source of truth
-- Filter dashboards by `stuurtabel_id`
-- Show executed controls from `controle` + `controleDone`
-- Build dedicated control report pages over the synced data
+- read invoice-control data per client from SQL Server
+- sync current and history Parquet datasets
+- support both:
+  - `RG` via `gecontroleerdeRittenDetail` and `gecontroleerdeRoutesDetail`
+  - `VA` via `gecontroleerdeVARittenDetail`
+- use `stuurtabel2_last` as the current-run source of truth
+- filter dashboard/reporting by `stuurtabel_id`
+- show executed controls from `controle` + `controleDone`
+- reproduce Power BI control reports with a better UI
 
-Not done yet:
+Still open:
 
-- no finalized per-control deviation logic
-- no optimized history deduplication yet
-- no full control-page coverage beyond the first implemented pages
+- per-control business logic is not final for all controls
+- history deduplication is not implemented yet
+- multi-client loading differences still need hardening
 
 ## Architecture
 
 ```text
-SQL Server (per client, schema facturatie)
+SQL Server (schema facturatie by default)
     -> sync_pipeline/
-    -> Parquet datasets in data/client=<slug>/
-    -> DuckDB queries in backend/apps/analytics/services.py
+    -> Parquet in data/client=<slug>/
+    -> DuckDB analytics in backend/apps/analytics/services.py
     -> Django views/templates in backend/apps/dashboards/
 ```
 
-Main dataset families:
+Main datasets:
 
 - `manifest`
 - `ritten_detail`
@@ -41,7 +41,7 @@ Main dataset families:
 - `routes_controls_long`
 - `va_ritten_controls_long`
 
-## Exact Environment Used Here
+## Exact Stack / Versions
 
 - Python `3.13.5`
 - Django `5.2.12`
@@ -51,26 +51,27 @@ Main dataset families:
 - pyodbc `5.3.0`
 - python-dotenv `1.2.2`
 - psycopg `3.3.3`
-- Local environment: `.venv` created with `python -m venv .venv`
-- Working SQL Server ODBC driver on this machine: `ODBC Driver 17 for SQL Server`
+- Local environment style: `.venv` created with `python -m venv .venv`
+- Confirmed SQL Server ODBC driver on this machine: `ODBC Driver 17 for SQL Server`
 
-## Repository Layout
+## Repo Layout
 
 ```text
 backend/           Django project, apps, admin, management commands
 sync_pipeline/     SQL Server extraction and Parquet sync pipeline
-analytics/         Shared SQL files
 templates/         Django templates
 static/            Static assets
 data/              Local Parquet datasets + analytics.duckdb
-uploads/           Reference files provided during development
-scripts/           Utility scripts
+uploads/           Power BI screenshots and business reference files
 todo.md            Open follow-up items
+HANDOFF.md         Fresh-session handover file
 ```
 
 ## Install And Start
 
-1. Create and activate the existing-style virtualenv:
+Use the existing `.venv` style. Do not introduce Poetry/Conda unless explicitly requested.
+
+1. Create and activate the virtualenv:
 
    ```bash
    python -m venv .venv
@@ -95,7 +96,7 @@ todo.md            Open follow-up items
    cp .env.example .env
    ```
 
-4. Local minimum `.env`:
+4. Minimum local `.env`:
 
    ```env
    DEBUG=True
@@ -110,7 +111,7 @@ todo.md            Open follow-up items
    python manage.py migrate
    ```
 
-6. Create the admin user:
+6. Create an admin user:
 
    ```bash
    python manage.py createsuperuser
@@ -128,9 +129,9 @@ Application URLs:
 - Admin: `http://127.0.0.1:8000/admin/`
 - Login: `http://127.0.0.1:8000/accounts/login/`
 
-## Configure Application
+## Seed / Initial Configuration
 
-There is no separate seed command yet. Initial setup is done in Django admin.
+There is no dedicated seed command yet. Initial setup is done in Django admin.
 
 Create:
 
@@ -139,21 +140,21 @@ Create:
 3. `SyncConfig`
 4. `ClientAccess`
 
-For the current source system, `DataSourceConfig.extra_params` must include:
+Current default source behavior:
 
-```json
-{"schema": "facturatie"}
-```
+- new `DataSourceConfig.extra_params` defaults to:
 
-Notes:
+  ```json
+  {"schema": "facturatie"}
+  ```
 
-- local development can run on SQLite by leaving `POSTGRES_*` unset
-- production should use PostgreSQL
-- SQL Server access requires network/VPN access
+- runtime also falls back to `facturatie` if `extra_params` is empty
+
+Use the client slug for sync commands, for example `viave` or `Odion` depending on how the client was stored.
 
 ## Data Refresh
 
-Run a sync from `backend/`:
+Run from `backend/`:
 
 ```bash
 python manage.py sync_client_data --client <slug>
@@ -174,70 +175,88 @@ python manage.py show_sync_metadata --client viave
 Current sync behavior:
 
 - rebuilds `current/` datasets atomically
-- appends `history/` snapshots on every sync
+- appends `history/` snapshots every sync
 - writes RG and VA datasets separately
-- updates `manifest/current` with:
+- writes `manifest/current` with:
   - `stuurtabel_id`
   - `omschrijving`
   - `soortvervoer`
 
-Open follow-up:
+## Dashboard / Reporting
 
-- static data should not create duplicate history snapshots on every run
-- see [todo.md](/Users/pedroprevost/ontwikkel/factuurcontrole/todo.md)
+Dashboard behavior:
 
-## Dashboard And Reporting
-
-Current dashboard behavior:
-
-- `stuurtabel_id` selector is backed by `manifest/current`
+- `stuurtabel_id` selector comes from `manifest/current`
 - selector label shows:
   - `stuurtabel_id`
   - `soortvervoer`
   - `omschrijving`
-- dashboard chooses RG vs VA dataset family by `soortvervoer`
-- executed controls are clickable links to control detail pages
+- executed controls link directly to control pages
+- dashboard export button creates one XLSX workbook:
+  - sheet 1 `summary`
+  - one sheet per executed control: `control.<number>`
 
-Current control report coverage:
+Detail page defaults:
 
-- Control `1`: implemented
-  - title: `Bestelling ook in SW?`
-  - based on `resultaat_1` and `tekst_1`
-- Control `8`: implemented
-  - title: `Overschrijden reistijd`
-  - based on `resultaat_8`, `controlewaarde_8`, `dempelwaarde_8`, and ride timing fields
-- Other controls:
-  - route exists
-  - currently show placeholder content until implemented
+- full-width layout
+- compact no-wrap tables
+- dates shown as `dd-mm-yyyy`
+- times shown as `HH:mm`
+- empty values shown blank
 
-Detail page layout decisions:
+Client-side sorting:
 
-- full-width (`container-fluid`) layout
-- smaller no-wrap table font for wide detail tables
-- location codes stripped from `locatie_van` and `locatie_naar`
-- date shown as `dd-mm-yyyy`
-- time shown as `HH:MM`
-- empty values shown blank instead of `None`
+- click header to sort
+- `Shift+click` for multi-column sorting
+
+## Implemented Reports
+
+Custom report pages:
+
+- control `1`
+- control `8`
+- control `10`
+- control `11`
+- control `1004`
+- control `1005`
+
+Generic first-pass report pages:
+
+- `2, 3, 7, 9, 12, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24`
+- `1001, 1002, 1003, 1006, 1007, 1008`
 
 ## Recent Decisions
 
-- Added `requirements.txt` without changing dependency policy
-- Added `HANDOFF.md` for context handover
-- Carried `omschrijving` and `soortvervoer` from `stuurtabel2_last` into `manifest`
-- Added VA sync path:
+- default SQL Server schema is now `facturatie`
+- dashboard export replaced the old drilldown button
+- dashboard export produces a multi-sheet XLSX workbook
+- VA support added:
   - `gecontroleerdeVARittenDetail`
   - `va_ritten_detail`
   - `va_ritten_controls_long`
-- Split analytics by run type:
-  - RG uses `ritten_detail` / `routes_detail`
-  - VA uses `va_ritten_detail`
-- Executed controls now link to control detail routes
-- Control detail pages should use fluid width by default
+- dashboard/reporting switches dataset family by `soortvervoer`
+- control 10 uses side-by-side maps:
+  - actual route red
+  - optimized route black
+  - route times shown in headers
+  - stop-to-stop lines kept intentionally, not turn-by-turn routing
+- 1004 and 1005 redesigned as aggregate overview pages
 
-## Reference Inputs In Repo
+## Current Caveats
 
-Files used as business/UI references:
+- many control pages still need fine-tuning against Power BI
+- history still grows on unchanged data
+- second-client data shape still needs investigation
+- dashboard XLSX export and generic client-side sorting were patched recently and should be re-verified after restart
+
+## References
+
+Business/UI references in repo:
 
 - [uploads/Controles Smartfact.docx](/Users/pedroprevost/ontwikkel/factuurcontrole/uploads/Controles%20Smartfact.docx)
-- [uploads/control1.png](/Users/pedroprevost/ontwikkel/factuurcontrole/uploads/control1.png)
-- [uploads/control8.png](/Users/pedroprevost/ontwikkel/factuurcontrole/uploads/control8.png)
+- Power BI screenshots in [uploads](/Users/pedroprevost/ontwikkel/factuurcontrole/uploads)
+
+For full session continuity, also read:
+
+- [HANDOFF.md](/Users/pedroprevost/ontwikkel/factuurcontrole/HANDOFF.md)
+- [todo.md](/Users/pedroprevost/ontwikkel/factuurcontrole/todo.md)

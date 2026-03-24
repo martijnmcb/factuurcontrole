@@ -419,7 +419,7 @@ class DuckDBAnalyticsService:
         routes_glob = self._dataset_glob(client_slug, "routes_detail")
         ritten_glob = self._dataset_glob(client_slug, "ritten_detail")
         if not self._table_exists(routes_glob) or not self._table_exists(ritten_glob):
-            return ControlReportSummary(), [], None, [], [], [], 0
+            return ControlReportSummary(), [], None, [], [], [], 0, None, None
 
         with self.connect() as conn:
             filter_sql = self._run_filter_sql(stuurtabel_id)
@@ -472,6 +472,8 @@ class DuckDBAnalyticsService:
             replanned_points: list[dict] = []
             route_detail_rows = []
             route_detail_total = 0
+            actual_duration_minutes = None
+            replanned_duration_minutes = None
 
             if selected_route and selected_date:
                 total_points_query = f"""
@@ -482,6 +484,24 @@ class DuckDBAnalyticsService:
                       {filter_sql}
                 """
                 route_detail_total = conn.execute(total_points_query).fetchone()[0]
+                duration_query = f"""
+                    SELECT
+                        CASE
+                            WHEN MIN(netto_instap) IS NOT NULL AND MAX(netto_uitstap) IS NOT NULL
+                            THEN date_diff('minute', MIN(netto_instap), MAX(netto_uitstap))
+                            ELSE NULL
+                        END AS actual_duration_minutes,
+                        CASE
+                            WHEN MIN(netto_herplan_instap) IS NOT NULL AND MAX(netto_herplan_uitstap) IS NOT NULL
+                            THEN date_diff('minute', MIN(netto_herplan_instap), MAX(netto_herplan_uitstap))
+                            ELSE NULL
+                        END AS replanned_duration_minutes
+                    FROM read_parquet('{ritten_glob}')
+                    WHERE route_nummer = '{selected_route}'
+                      AND CAST(datum AS DATE) = DATE '{selected_date}'
+                      {filter_sql}
+                """
+                actual_duration_minutes, replanned_duration_minutes = conn.execute(duration_query).fetchone()
                 points_query = f"""
                     SELECT
                         id,
@@ -648,6 +668,8 @@ class DuckDBAnalyticsService:
                 replanned_points,
                 route_detail_rows,
                 route_detail_total,
+                actual_duration_minutes,
+                replanned_duration_minutes,
             )
 
     def get_control_11_report(self, client_slug: str, stuurtabel_id: int | None = None, limit: int = 100, offset: int = 0):

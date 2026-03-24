@@ -4,6 +4,10 @@ from django.db import models
 from apps.core.models import TimeStampedModel
 
 
+def default_data_source_extra_params() -> dict[str, str]:
+    return {"schema": "facturatie"}
+
+
 class Client(TimeStampedModel):
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True)
@@ -23,7 +27,7 @@ class DataSourceConfig(TimeStampedModel):
     username = models.CharField(max_length=255, blank=True)
     password = models.CharField(max_length=255, blank=True)
     driver = models.CharField(max_length=255, default="ODBC Driver 18 for SQL Server")
-    extra_params = models.JSONField(default=dict, blank=True)
+    extra_params = models.JSONField(default=default_data_source_extra_params, blank=True)
     is_enabled = models.BooleanField(default=True)
 
     def __str__(self) -> str:

@@ -76,6 +76,15 @@ class ClientContextMixin(LoginRequiredMixin):
         context["pagination_query"] = urlencode(query, doseq=True)
         return context
 
+    def format_minutes_label(self, minutes: int | None) -> str:
+        if minutes is None:
+            return "n.v.t."
+        hours = minutes // 60
+        remainder = minutes % 60
+        if hours:
+            return f"{hours}u {remainder:02d}m"
+        return f"{remainder} min"
+
     def _excel_column_name(self, index: int) -> str:
         name = ""
         while index > 0:
@@ -220,7 +229,17 @@ class ClientContextMixin(LoginRequiredMixin):
             ]
             return {"summary": summary, "headers": headers, "rows": rows, "title": title}
         if control_id == 10:
-            summary, route_options, _selected_route_key, _actual_points, _replanned_points, _route_detail_rows, _total = analytics.get_control_10_report(
+            (
+                summary,
+                route_options,
+                _selected_route_key,
+                _actual_points,
+                _replanned_points,
+                _route_detail_rows,
+                _total,
+                _actual_duration_minutes,
+                _replanned_duration_minutes,
+            ) = analytics.get_control_10_report(
                 client_slug,
                 selected_run_id,
                 None,
@@ -235,7 +254,17 @@ class ClientContextMixin(LoginRequiredMixin):
             ]
             rows = []
             for route in route_options:
-                _summary, _opts, _selected, _actual, _replanned, detail_rows, _count = analytics.get_control_10_report(
+                (
+                    _summary,
+                    _opts,
+                    _selected,
+                    _actual,
+                    _replanned,
+                    detail_rows,
+                    _count,
+                    _actual_duration_minutes,
+                    _replanned_duration_minutes,
+                ) = analytics.get_control_10_report(
                     client_slug,
                     selected_run_id,
                     route.route_key,
@@ -254,7 +283,35 @@ class ClientContextMixin(LoginRequiredMixin):
             headers = ["Kenteken", "Emissieklasse", "Inzetdagen", "Routes", "Ritten"]
             rows = [(row.kenteken, row.emission_class, row.inzetdagen, row.routes, row.rides) for row in vehicle_rows]
             return {"summary": summary, "headers": headers, "rows": rows, "title": title}
-        if control_id in {2, 3, 7, 9, 12, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008}:
+        if control_id == 1004:
+            summary, emission_classes, weekly_rows, trip_rows, distance_rows = analytics.get_control_1004_report(
+                client_slug,
+                selected_run_id,
+            )
+            headers = ["Type", "Dimensie", *[str(emission_class) for emission_class in emission_classes], "Totaal", "Percentage"]
+            rows = []
+            for row in weekly_rows:
+                rows.append(("Voertuigen per ISO week", row["label"], *row["values"], row["total"], ""))
+            for row in trip_rows:
+                rows.append(("Ritten per emissieniveau", row["emission_class"], *["" for _ in emission_classes], row["trips"], f'{row["percentage"]}%'))
+            for row in distance_rows:
+                rows.append(("Afgelegde reizigers kilometers per emissieniveau", row["emission_class"], *["" for _ in emission_classes], row["distance"], f'{row["percentage"]}%'))
+            return {"summary": summary, "headers": headers, "rows": rows, "title": title}
+        if control_id == 1005:
+            summary, fuel_types, weekly_rows, trip_rows, distance_rows = analytics.get_control_1005_report(
+                client_slug,
+                selected_run_id,
+            )
+            headers = ["Type", "Dimensie", *[str(fuel_type) for fuel_type in fuel_types], "Totaal", "Percentage"]
+            rows = []
+            for row in weekly_rows:
+                rows.append(("Voertuigen per ISO week", row["label"], *row["values"], row["total"], ""))
+            for row in trip_rows:
+                rows.append(("Ritten per brandstoftype", row["fuel_type"], *["" for _ in fuel_types], row["trips"], f'{row["percentage"]}%'))
+            for row in distance_rows:
+                rows.append(("Afgelegde reizigers kilometers per brandstoftype", row["fuel_type"], *["" for _ in fuel_types], row["distance"], f'{row["percentage"]}%'))
+            return {"summary": summary, "headers": headers, "rows": rows, "title": title}
+        if control_id in {2, 3, 7, 9, 12, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1006, 1007, 1008}:
             summary, headers, rows, _ = analytics.get_generic_control_report(
                 client_slug,
                 selected_run_id,
@@ -688,7 +745,7 @@ class ControlReportView(ClientContextMixin, TemplateView):
             self.add_pagination_context(context, total_rows)
         elif control_id == 10:
             selected_route_key = self.request.GET.get("route_key")
-            summary, route_options, selected_route_key, actual_points, replanned_points, route_detail_rows, total_rows = analytics.get_control_10_report(
+            summary, route_options, selected_route_key, actual_points, replanned_points, route_detail_rows, total_rows, actual_duration_minutes, replanned_duration_minutes = analytics.get_control_10_report(
                 client.slug,
                 selected_run_id,
                 selected_route_key,
@@ -701,6 +758,8 @@ class ControlReportView(ClientContextMixin, TemplateView):
             context["actual_points"] = actual_points
             context["replanned_points"] = replanned_points
             context["route_detail_rows"] = route_detail_rows
+            context["actual_duration_label"] = self.format_minutes_label(actual_duration_minutes)
+            context["replanned_duration_label"] = self.format_minutes_label(replanned_duration_minutes)
             context["control_title"] = "Controle 10 - Routekaart (optimalisatie)"
             context["control_explanation"] = (
                 "Vergelijk de werkelijke stopvolgorde met de herplande volgorde op basis van netto instap- en uitstaptijden."

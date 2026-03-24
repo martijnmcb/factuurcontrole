@@ -67,7 +67,10 @@
     <div class="col-xl-6">
         <div class="panel p-4 h-100">
             <div class="d-flex justify-content-between align-items-center mb-3">
-                <h2 class="h5 mb-0">Werkelijke route</h2>
+                <div class="d-flex align-items-center gap-3">
+                    <h2 class="h5 mb-0">Werkelijke route</h2>
+                    <span class="text-white fw-semibold">Route tijd: {{ actual_duration_label }}</span>
+                </div>
                 <span class="text-light-emphasis small">{{ selected_route_key|default:"Geen route" }}</span>
             </div>
             <div id="actualRouteMap" class="route-map" data-points-id="actual-route-points"></div>
@@ -76,7 +79,10 @@
     <div class="col-xl-6">
         <div class="panel p-4 h-100">
             <div class="d-flex justify-content-between align-items-center mb-3">
-                <h2 class="h5 mb-0">Herplande route</h2>
+                <div class="d-flex align-items-center gap-3">
+                    <h2 class="h5 mb-0">Herplande route</h2>
+                    <span class="text-white fw-semibold">Route tijd: {{ replanned_duration_label }}</span>
+                </div>
                 <span class="text-light-emphasis small">{{ selected_route_key|default:"Geen route" }}</span>
             </div>
             <div id="replannedRouteMap" class="route-map" data-points-id="replanned-route-points"></div>
@@ -116,25 +122,25 @@
                     <th>Vervoerder</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody id="route-detail-tbody">
                 {% for row in route_detail_rows %}
                     <tr>
-                        <td>{{ row.0|date:"d-m-Y"|default_if_none:"" }}</td>
+                        <td data-sort-value="{{ row.0|date:'Y-m-d'|default_if_none:'' }}">{{ row.0|date:"d-m-Y"|default_if_none:"" }}</td>
                         <td>{{ row.1|default_if_none:"" }}</td>
                         <td>{{ row.2|default_if_none:"" }}</td>
-                        <td>{{ row.3|time:"H:i"|default_if_none:"" }}</td>
+                        <td data-sort-value="{{ row.3|time:'H:i'|default_if_none:'' }}">{{ row.3|time:"H:i"|default_if_none:"" }}</td>
                         <td>{{ row.4|default_if_none:"" }}</td>
                         <td>{{ row.5|default_if_none:"" }}</td>
-                        <td>{{ row.6|time:"H:i"|default_if_none:"" }}</td>
+                        <td data-sort-value="{{ row.6|time:'H:i'|default_if_none:'' }}">{{ row.6|time:"H:i"|default_if_none:"" }}</td>
                         <td>{{ row.7|default_if_none:"" }}</td>
                         <td>{{ row.8|default_if_none:"" }}</td>
                         <td>{{ row.9|default_if_none:"" }}</td>
-                        <td>{{ row.10|time:"H:i"|default_if_none:"" }}</td>
-                        <td>{{ row.11|time:"H:i"|default_if_none:"" }}</td>
-                        <td>{{ row.12|time:"H:i"|default_if_none:"" }}</td>
-                        <td>{{ row.13|time:"H:i"|default_if_none:"" }}</td>
-                        <td>{{ row.14|time:"H:i"|default_if_none:"" }}</td>
-                        <td>{{ row.15|time:"H:i"|default_if_none:"" }}</td>
+                        <td data-sort-value="{{ row.10|time:'H:i'|default_if_none:'' }}">{{ row.10|time:"H:i"|default_if_none:"" }}</td>
+                        <td data-sort-value="{{ row.11|time:'H:i'|default_if_none:'' }}">{{ row.11|time:"H:i"|default_if_none:"" }}</td>
+                        <td data-sort-value="{{ row.12|time:'H:i'|default_if_none:'' }}">{{ row.12|time:"H:i"|default_if_none:"" }}</td>
+                        <td data-sort-value="{{ row.13|time:'H:i'|default_if_none:'' }}">{{ row.13|time:"H:i"|default_if_none:"" }}</td>
+                        <td data-sort-value="{{ row.14|time:'H:i'|default_if_none:'' }}">{{ row.14|time:"H:i"|default_if_none:"" }}</td>
+                        <td data-sort-value="{{ row.15|time:'H:i'|default_if_none:'' }}">{{ row.15|time:"H:i"|default_if_none:"" }}</td>
                         <td>{{ row.16|default_if_none:"" }}</td>
                     </tr>
                 {% empty %}
@@ -185,7 +191,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         const points = JSON.parse(scriptNode.textContent || "[]");
-        const map = L.map(node, { scrollWheelZoom: false });
+        const map = L.map(node, { scrollWheelZoom: true });
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             attribution: "&copy; OpenStreetMap contributors",
             referrerPolicy: "strict-origin-when-cross-origin",

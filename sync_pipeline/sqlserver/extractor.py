@@ -53,12 +53,12 @@ def _read_dataframe(connection, query: str, params: Sequence[object] | None = No
 
 def _configured_schema(config: DataSourceConfig | None) -> str | None:
     if not config:
-        return None
+        return "facturatie"
     for key in ("schema", "default_schema", "source_schema"):
         value = config.extra_params.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
-    return None
+    return "facturatie"
 
 
 def _configured_table_overrides(config: DataSourceConfig | None) -> dict[str, str]:
