@@ -1,5 +1,8 @@
+from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.http import Http404, HttpResponse
+from django.http import Http404, HttpResponse, HttpResponseForbidden, JsonResponse
+from django.shortcuts import redirect
+from django.views import View
 from django.views.generic import TemplateView
 from urllib.parse import urlencode
 import csv
@@ -10,6 +13,8 @@ from xml.sax.saxutils import escape
 from apps.analytics.services import DuckDBAnalyticsService
 from apps.clients.models import Client
 from apps.clients.services import get_accessible_clients
+from apps.sync_jobs.services import SyncOrchestrator
+from apps.sync_jobs.models import SyncRun
 
 
 class DashboardHomeView(LoginRequiredMixin, TemplateView):
@@ -33,6 +38,28 @@ class ClientContextMixin(LoginRequiredMixin):
 
     def analytics_service(self) -> DuckDBAnalyticsService:
         return self.analytics_service_class()
+
+    def get_sync_orchestrator(self) -> SyncOrchestrator:
+        return SyncOrchestrator()
+
+    def can_refresh_client(self, client: Client) -> bool:
+        role = getattr(self.request.user, "role", "")
+        return bool(self.request.user.is_superuser or role in {"admin", "analyst"})
+
+    def serialize_sync_run(self, sync_run: SyncRun | None) -> dict | None:
+        if sync_run is None:
+            return None
+        progress = (sync_run.metadata or {}).get("progress", {})
+        return {
+            "id": sync_run.id,
+            "status": sync_run.status,
+            "started_at": sync_run.started_at.isoformat() if sync_run.started_at else None,
+            "finished_at": sync_run.finished_at.isoformat() if sync_run.finished_at else None,
+            "records_synced": sync_run.records_synced,
+            "message": sync_run.message,
+            "is_running": sync_run.status == "started",
+            "progress": progress,
+        }
 
     def get_available_run_ids(self, client: Client) -> list[int]:
         return self.analytics_service().get_current_run_ids(client.slug)
@@ -400,7 +427,36 @@ class ClientDashboardView(ClientContextMixin, TemplateView):
         context["metrics"] = analytics.get_dashboard_metrics(client.slug, selected_run_id)
         context["control_breakdown"] = analytics.get_control_breakdown(client.slug, selected_run_id)
         context["executed_controls"] = analytics.get_executed_controls(client.slug, selected_run_id)
+        context["can_refresh_client"] = self.can_refresh_client(client)
+        latest_sync = client.sync_runs.first()
+        context["latest_sync"] = latest_sync
+        context["latest_sync_payload"] = self.serialize_sync_run(latest_sync)
         return context
+
+
+class ClientRefreshView(ClientContextMixin, View):
+    def post(self, request, *args, **kwargs):
+        client = self.get_client()
+        if not self.can_refresh_client(client):
+            return HttpResponseForbidden("You are not allowed to refresh this client.")
+
+        try:
+            sync_run, started = self.get_sync_orchestrator().sync_client_async(client)
+            if started:
+                messages.success(request, f"Refresh started for {client.slug}. You can leave this page while it runs.")
+            else:
+                messages.info(request, f"A refresh for {client.slug} is already running.")
+        except Exception as exc:  # noqa: BLE001
+            messages.error(request, f"Refresh failed for {client.slug}: {exc}")
+
+        return redirect("client_dashboard", slug=client.slug)
+
+
+class ClientRefreshStatusView(ClientContextMixin, View):
+    def get(self, request, *args, **kwargs):
+        client = self.get_client()
+        latest_sync = client.sync_runs.first()
+        return JsonResponse({"sync_run": self.serialize_sync_run(latest_sync)})
 
 
 class DrilldownView(ClientContextMixin, TemplateView):

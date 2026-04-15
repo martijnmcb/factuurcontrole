@@ -130,6 +130,174 @@ const initReportTableSorting = () => {
 const initDashboardPage = () => {
   initReportTableSorting();
 
+  const showToast = (message, variant = "info") => {
+    const container = document.getElementById("appToastContainer");
+    if (!container) {
+      return;
+    }
+    const toast = document.createElement("div");
+    const bgClass = variant === "error" ? "bg-danger" : variant === "success" ? "bg-success" : "bg-info";
+    toast.className = `toast show align-items-center text-white ${bgClass} border-0 mb-2`;
+    toast.setAttribute("role", "alert");
+    toast.setAttribute("aria-live", "assertive");
+    toast.setAttribute("aria-atomic", "true");
+    toast.innerHTML = `
+      <div class="d-flex">
+        <div class="toast-body">${message}</div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" aria-label="Close"></button>
+      </div>
+    `;
+    const closeButton = toast.querySelector(".btn-close");
+    if (closeButton) {
+      closeButton.addEventListener("click", () => toast.remove());
+    }
+    container.appendChild(toast);
+    window.setTimeout(() => {
+      toast.remove();
+    }, 5000);
+  };
+
+  const syncPanel = document.getElementById("syncStatusPanel");
+  const syncPayloadNode = document.getElementById("latest-sync-payload");
+  if (syncPanel) {
+    const statusUrl = syncPanel.dataset.statusUrl;
+    const statusText = document.getElementById("syncStatusText");
+    const startedAt = document.getElementById("syncStartedAt");
+    const finishedAt = document.getElementById("syncFinishedAt");
+    const progressWrap = document.getElementById("syncProgressWrap");
+    const stageText = document.getElementById("syncStageText");
+    const progressBar = document.getElementById("syncProgressBar");
+    const messageNode = document.getElementById("syncMessage");
+    const recordsNode = document.getElementById("syncRecords");
+
+    const formatDateTime = (value) => {
+      if (!value) {
+        return "";
+      }
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return value;
+      }
+      const pad = (number) => String(number).padStart(2, "0");
+      return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    };
+
+    let currentSyncRun = syncPayloadNode ? JSON.parse(syncPayloadNode.textContent || "null") : null;
+
+    const renderSyncRun = (syncRun) => {
+      if (!syncRun) {
+        if (statusText) statusText.textContent = "Er is nog geen refresh uitgevoerd vanuit de applicatie.";
+        if (startedAt) startedAt.textContent = "";
+        if (finishedAt) finishedAt.textContent = "";
+        if (stageText) stageText.textContent = "";
+        if (messageNode) messageNode.textContent = "";
+        if (recordsNode) recordsNode.textContent = "";
+        if (progressWrap) progressWrap.classList.add("d-none");
+        return;
+      }
+
+      const statusLabels = {
+        started: "Started",
+        success: "Success",
+        failed: "Failed",
+      };
+      if (statusText) {
+        statusText.textContent = `Laatste refresh: ${statusLabels[syncRun.status] || syncRun.status}.`;
+      }
+      if (startedAt) {
+        startedAt.textContent = syncRun.started_at ? `Gestart: ${formatDateTime(syncRun.started_at)}` : "";
+      }
+      if (finishedAt) {
+        finishedAt.textContent = syncRun.finished_at ? `Klaar: ${formatDateTime(syncRun.finished_at)}` : "";
+      }
+      const progress = syncRun.progress || {};
+      if (stageText) {
+        stageText.textContent = progress.message || "";
+      }
+      if (messageNode) {
+        messageNode.textContent = syncRun.message || "";
+      }
+      if (recordsNode) {
+        recordsNode.textContent = `Records synced: ${syncRun.records_synced ?? 0}`;
+      }
+      if (progressBar) {
+        const hasPercent = Number.isFinite(progress.percent);
+        const width = hasPercent ? Math.max(0, Math.min(100, progress.percent)) : 100;
+        progressBar.style.width = `${width}%`;
+        progressBar.textContent = hasPercent ? `${width}%` : "Bezig...";
+        progressBar.classList.toggle("progress-bar-animated", syncRun.is_running);
+      }
+      if (progressWrap) {
+        progressWrap.classList.toggle("d-none", !syncRun.is_running);
+      }
+    };
+
+    renderSyncRun(currentSyncRun);
+
+    if (statusUrl) {
+      let polling = null;
+      let reloadScheduled = false;
+      const pollStatus = async () => {
+        try {
+          const response = await fetch(statusUrl, {
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+            credentials: "same-origin",
+          });
+          if (!response.ok) {
+            return;
+          }
+          const payload = await response.json();
+          const nextSyncRun = payload.sync_run || null;
+          const previousStatus = currentSyncRun?.status || null;
+          const nextStatus = nextSyncRun?.status || null;
+          const sameSync = currentSyncRun && nextSyncRun && currentSyncRun.id === nextSyncRun.id;
+
+          renderSyncRun(nextSyncRun);
+
+          if (sameSync && previousStatus === "started" && nextStatus === "success") {
+            showToast("Refresh completed. Dashboard wordt opnieuw geladen.", "success");
+            if (!reloadScheduled) {
+              reloadScheduled = true;
+              window.setTimeout(() => {
+                const url = new URL(window.location.href);
+                url.searchParams.set("_refreshed", String(nextSyncRun.id));
+                window.location.href = url.toString();
+              }, 1200);
+            }
+          } else if (sameSync && previousStatus === "started" && nextStatus === "failed") {
+            showToast(`Refresh failed: ${nextSyncRun.message || "Onbekende fout"}`, "error");
+          }
+
+          currentSyncRun = nextSyncRun;
+
+          if (!(nextSyncRun && nextSyncRun.is_running) && polling) {
+            window.clearInterval(polling);
+            polling = null;
+          }
+        } catch (_error) {
+          // Ignore transient polling errors; next interval can recover.
+        }
+      };
+
+      if (currentSyncRun && currentSyncRun.is_running) {
+        polling = window.setInterval(pollStatus, 5000);
+      }
+
+      const refreshForm = syncPanel.parentElement?.querySelector('form[action$="/refresh/"]');
+      if (refreshForm) {
+        refreshForm.addEventListener("submit", () => {
+          showToast("Refresh started. Deze pagina werkt de status automatisch bij.", "info");
+          if (!polling) {
+            window.setTimeout(() => {
+              pollStatus();
+              polling = window.setInterval(pollStatus, 5000);
+            }, 1000);
+          }
+        });
+      }
+    }
+  }
+
   const chartNode = document.getElementById("controlBreakdownChart");
   if (chartNode && typeof Chart !== "undefined") {
     const labels = JSON.parse(chartNode.dataset.labels || "[]");

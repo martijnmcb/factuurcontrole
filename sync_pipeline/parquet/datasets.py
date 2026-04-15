@@ -23,6 +23,16 @@ def history_dataset_dir(client_slug: str, dataset: str) -> Path:
     return dataset_root(client_slug, dataset) / "history"
 
 
+def read_current_dataset(client_slug: str, dataset: str) -> pd.DataFrame:
+    target_dir = current_dataset_dir(client_slug, dataset)
+    if not target_dir.exists():
+        return pd.DataFrame()
+    parquet_files = sorted(target_dir.glob("*.parquet"))
+    if not parquet_files:
+        return pd.DataFrame()
+    return pd.read_parquet([str(path) for path in parquet_files])
+
+
 def _replace_directory_atomic(source_dir: Path, target_dir: Path) -> None:
     backup_dir = target_dir.with_name(f"{target_dir.name}.__bak__")
     if backup_dir.exists():
