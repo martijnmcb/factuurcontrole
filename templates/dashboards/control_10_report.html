@@ -24,6 +24,10 @@
                 </select>
             </div>
             <div>
+                <label for="routeSearch" class="form-label small text-light-emphasis mb-1">Zoek route</label>
+                <input id="routeSearch" type="text" class="form-control" placeholder="RouteNummer zoeken">
+            </div>
+            <div>
                 <label for="route_nummer" class="form-label small text-light-emphasis mb-1">Route</label>
                 <select id="route_nummer" name="route_key" class="form-select" onchange="this.form.submit()">
                     {% for route in route_options %}
@@ -176,6 +180,36 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
+    const routeSearch = document.getElementById("routeSearch");
+    const routeSelect = document.getElementById("route_nummer");
+    if (routeSearch && routeSelect) {
+        const originalOptions = Array.from(routeSelect.options).map((option) => ({
+            value: option.value,
+            text: option.text,
+            selected: option.selected,
+        }));
+
+        const renderOptions = (query) => {
+            const normalizedQuery = query.trim().toLowerCase();
+            const matchingOptions = normalizedQuery
+                ? originalOptions.filter((option) => option.text.toLowerCase().includes(normalizedQuery))
+                : originalOptions;
+
+            routeSelect.innerHTML = "";
+            matchingOptions.forEach((optionData) => {
+                const option = document.createElement("option");
+                option.value = optionData.value;
+                option.textContent = optionData.text;
+                option.selected = optionData.selected;
+                routeSelect.appendChild(option);
+            });
+        };
+
+        routeSearch.addEventListener("input", (event) => {
+            renderOptions(event.target.value);
+        });
+    }
+
     if (typeof L === "undefined") {
         return;
     }

@@ -131,7 +131,20 @@ def extract_current_runs_frame(
     discovered_tables: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     table_name = _resolve_table_name(connection, "stuurtabel2_last", config, discovered_tables)
-    dataframe = _normalize_columns(_read_dataframe(connection, f"SELECT * FROM {table_name}"))
+    column_probe = _normalize_columns(_read_dataframe(connection, f"SELECT TOP 0 * FROM {table_name}"))
+    available_columns = list(column_probe.columns)
+    run_id_column = _find_first_matching_column(column_probe, RUN_ID_CANDIDATES)
+    if not run_id_column:
+        return pd.DataFrame(columns=["stuurtabel_id", "omschrijving"])
+
+    selected_columns = [run_id_column]
+    if "omschrijving" in available_columns:
+        selected_columns.append("omschrijving")
+    if "soortvervoer" in available_columns:
+        selected_columns.append("soortvervoer")
+
+    query = f"SELECT {', '.join(f'[{column}]' for column in selected_columns)} FROM {table_name}"
+    dataframe = _normalize_columns(_read_dataframe(connection, query))
     run_id_column = _find_first_matching_column(dataframe, RUN_ID_CANDIDATES)
     if not run_id_column:
         return pd.DataFrame(columns=["stuurtabel_id", "omschrijving"])

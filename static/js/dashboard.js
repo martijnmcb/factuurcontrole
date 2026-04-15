@@ -130,6 +130,12 @@ const initReportTableSorting = () => {
 const initDashboardPage = () => {
   initReportTableSorting();
 
+  document.querySelectorAll(".auto-dismiss-alert").forEach((alertNode) => {
+    window.setTimeout(() => {
+      alertNode.remove();
+    }, 5000);
+  });
+
   const showToast = (message, variant = "info") => {
     const container = document.getElementById("appToastContainer");
     if (!container) {
@@ -160,11 +166,23 @@ const initDashboardPage = () => {
   const syncPanel = document.getElementById("syncStatusPanel");
   const syncPayloadNode = document.getElementById("latest-sync-payload");
   if (syncPanel) {
+    let autoHideTimer = null;
+    const closeButton = document.getElementById("syncStatusClose");
+    if (closeButton) {
+      closeButton.addEventListener("click", () => {
+        syncPanel.classList.add("d-none");
+      });
+    }
+
     const statusUrl = syncPanel.dataset.statusUrl;
     const statusText = document.getElementById("syncStatusText");
+    const outcomeBadge = document.getElementById("syncOutcomeBadge");
+    const noDataBadge = document.getElementById("syncNoDataBadge");
     const startedAt = document.getElementById("syncStartedAt");
     const finishedAt = document.getElementById("syncFinishedAt");
     const progressWrap = document.getElementById("syncProgressWrap");
+    const spinner = document.getElementById("syncSpinner");
+    const progressHint = document.getElementById("syncProgressHint");
     const stageText = document.getElementById("syncStageText");
     const progressBar = document.getElementById("syncProgressBar");
     const messageNode = document.getElementById("syncMessage");
@@ -186,9 +204,14 @@ const initDashboardPage = () => {
 
     const renderSyncRun = (syncRun) => {
       if (!syncRun) {
+        syncPanel.classList.add("d-none");
         if (statusText) statusText.textContent = "Er is nog geen refresh uitgevoerd vanuit de applicatie.";
+        if (outcomeBadge) outcomeBadge.classList.add("d-none");
+        if (noDataBadge) noDataBadge.classList.add("d-none");
         if (startedAt) startedAt.textContent = "";
         if (finishedAt) finishedAt.textContent = "";
+        if (spinner) spinner.classList.add("d-none");
+        if (progressHint) progressHint.textContent = "";
         if (stageText) stageText.textContent = "";
         if (messageNode) messageNode.textContent = "";
         if (recordsNode) recordsNode.textContent = "";
@@ -201,14 +224,40 @@ const initDashboardPage = () => {
         success: "Success",
         failed: "Failed",
       };
+      if (syncRun.is_running) {
+        syncPanel.classList.remove("d-none");
+      }
       if (statusText) {
         statusText.textContent = `Laatste refresh: ${statusLabels[syncRun.status] || syncRun.status}.`;
+      }
+      const noNewData = (syncRun.message || "").toLowerCase().includes("no new current data");
+      if (outcomeBadge) {
+        outcomeBadge.classList.toggle("d-none", syncRun.status !== "success");
+      }
+      if (noDataBadge) {
+        noDataBadge.classList.toggle("d-none", !noNewData);
       }
       if (startedAt) {
         startedAt.textContent = syncRun.started_at ? `Gestart: ${formatDateTime(syncRun.started_at)}` : "";
       }
       if (finishedAt) {
         finishedAt.textContent = syncRun.finished_at ? `Klaar: ${formatDateTime(syncRun.finished_at)}` : "";
+      }
+      if (spinner) {
+        spinner.classList.toggle("d-none", !syncRun.is_running);
+      }
+      if (progressHint) {
+        if (syncRun.is_running) {
+          progressHint.textContent = "Refresh loopt. Je kunt deze pagina verlaten; de status blijft doorlopen op de server.";
+        } else if (syncRun.status === "success" && noNewData) {
+          progressHint.textContent = "Refresh voltooid. Er was geen nieuwe data om op te halen.";
+        } else if (syncRun.status === "success") {
+          progressHint.textContent = "Refresh voltooid. De lokale data is bijgewerkt.";
+        } else if (syncRun.status === "failed") {
+          progressHint.textContent = "Refresh mislukt.";
+        } else {
+          progressHint.textContent = "";
+        }
       }
       const progress = syncRun.progress || {};
       if (stageText) {
@@ -226,9 +275,22 @@ const initDashboardPage = () => {
         progressBar.style.width = `${width}%`;
         progressBar.textContent = hasPercent ? `${width}%` : "Bezig...";
         progressBar.classList.toggle("progress-bar-animated", syncRun.is_running);
+        progressBar.classList.toggle("progress-bar-striped", syncRun.is_running);
+        progressBar.classList.toggle("bg-success", syncRun.status === "success");
+        progressBar.classList.toggle("bg-danger", syncRun.status === "failed");
       }
       if (progressWrap) {
-        progressWrap.classList.toggle("d-none", !syncRun.is_running);
+        progressWrap.classList.toggle("d-none", !syncRun.is_running && syncRun.status !== "success" && syncRun.status !== "failed");
+      }
+
+      if (autoHideTimer) {
+        window.clearTimeout(autoHideTimer);
+        autoHideTimer = null;
+      }
+      if (syncRun.status === "success" || syncRun.status === "failed") {
+        autoHideTimer = window.setTimeout(() => {
+          syncPanel.classList.add("d-none");
+        }, 5000);
       }
     };
 
@@ -286,6 +348,20 @@ const initDashboardPage = () => {
       const refreshForm = syncPanel.parentElement?.querySelector('form[action$="/refresh/"]');
       if (refreshForm) {
         refreshForm.addEventListener("submit", () => {
+          syncPanel.classList.remove("d-none");
+          if (outcomeBadge) outcomeBadge.classList.add("d-none");
+          if (noDataBadge) noDataBadge.classList.add("d-none");
+          if (statusText) statusText.textContent = "Laatste refresh: Started.";
+          if (progressWrap) progressWrap.classList.remove("d-none");
+          if (spinner) spinner.classList.remove("d-none");
+          if (progressHint) progressHint.textContent = "Refresh loopt. Je kunt deze pagina verlaten; de status blijft doorlopen op de server.";
+          if (stageText) stageText.textContent = "Starting refresh";
+          if (progressBar) {
+            progressBar.style.width = "0%";
+            progressBar.textContent = "0%";
+            progressBar.classList.add("progress-bar-animated", "progress-bar-striped");
+            progressBar.classList.remove("bg-success", "bg-danger");
+          }
           showToast("Refresh started. Deze pagina werkt de status automatisch bij.", "info");
           if (!polling) {
             window.setTimeout(() => {
