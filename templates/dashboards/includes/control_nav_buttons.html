@@ -1,0 +1,12 @@
+<div class="d-flex gap-2 align-items-end flex-wrap">
+    {% if previous_control_id %}
+        <a href="{% url 'control_report' client.slug previous_control_id %}?stuurtabel_id={{ selected_run_id }}" class="btn btn-outline-light">
+            Previous
+        </a>
+    {% endif %}
+    {% if next_control_id %}
+        <a href="{% url 'control_report' client.slug next_control_id %}?stuurtabel_id={{ selected_run_id }}" class="btn btn-outline-light">
+            Next
+        </a>
+    {% endif %}
+</div>

@@ -102,7 +102,10 @@ Use the existing `.venv` style. Do not introduce Poetry/Conda unless explicitly 
    DEBUG=True
    SECRET_KEY=change-me
    ALLOWED_HOSTS=127.0.0.1,localhost
+   CSRF_TRUSTED_ORIGINS=http://127.0.0.1:8081,http://localhost:8081
    ```
+
+   If Django is behind a reverse proxy such as nginx on another local origin or port, add that full origin with scheme to `CSRF_TRUSTED_ORIGINS`.
 
 5. Run migrations:
 

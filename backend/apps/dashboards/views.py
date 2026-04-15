@@ -350,7 +350,7 @@ class ClientDashboardView(ClientContextMixin, TemplateView):
         used_sheet_names = set()
 
         for control in executed_controls:
-            if not control.control_id:
+            if not analytics.is_deviation_control(control.control_id):
                 continue
             bundle = self.get_control_export_bundle(analytics, client.slug, selected_run_id, int(control.control_id))
             control_name = control.label.split(" - ", 1)[1] if " - " in control.label else bundle["title"]
@@ -723,6 +723,24 @@ class ControlReportView(ClientContextMixin, TemplateView):
         context["control_id"] = control_id
         definition = analytics.get_control_definition(control_id)
         context["implemented"] = control_id in {1, 8, 10, 11, 1004, 1005} or control_id in {2, 3, 7, 9, 12, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1006, 1007, 1008}
+        executed_controls = [control for control in analytics.get_executed_controls(client.slug, selected_run_id) if control.control_id is not None]
+        executed_control_ids = [int(control.control_id) for control in executed_controls]
+        if control_id in executed_control_ids:
+            current_index = executed_control_ids.index(control_id)
+            context["previous_control_id"] = executed_control_ids[current_index - 1] if current_index > 0 else None
+            context["next_control_id"] = executed_control_ids[current_index + 1] if current_index + 1 < len(executed_control_ids) else None
+        else:
+            context["previous_control_id"] = None
+            context["next_control_id"] = None
+        previous_run, trend_points = analytics.get_control_trend(client.slug, control_id, selected_run_id, 6)
+        previous_point = next(
+            (point for point in trend_points if previous_run is not None and point.stuurtabel_id == previous_run.stuurtabel_id),
+            None,
+        )
+        context["previous_run"] = previous_run
+        context["previous_trend_point"] = previous_point
+        context["trend_points"] = trend_points
+        context["trend_max_deviations"] = max((point.total_deviations for point in trend_points), default=0)
         if control_id == 1:
             summary, rows, total_rows = analytics.get_control_1_report(client.slug, selected_run_id, page_size, offset)
             context["summary"] = summary

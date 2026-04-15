@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, time
 from pathlib import Path
 import re
 
@@ -29,6 +29,15 @@ class ControlReportSummary:
     total_checked: int = 0
     total_deviations: int = 0
     deviation_percentage: float = 0.0
+
+
+@dataclass
+class ControlTrendPoint:
+    stuurtabel_id: int
+    label: str
+    total_deviations: int
+    total_checked: int
+    deviation_percentage: float
 
 
 @dataclass
@@ -95,6 +104,8 @@ CONTROL_DEFINITIONS = {
     1008: {"title": "Controle 1008 - Solo gemarkeerde client gecombineerd", "entity": "rit", "metric_label": "Ritten met afwijkingen"},
 }
 
+NON_DEVIATION_CONTROL_IDS = {20}
+
 
 class DuckDBAnalyticsService:
     def __init__(self, database_path: Path | None = None) -> None:
@@ -133,8 +144,12 @@ class DuckDBAnalyticsService:
     def _format_cell(self, column: str, value):
         if value is None:
             return ""
-        if column in {"datum", "rit_datum"} and hasattr(value, "strftime"):
+        if isinstance(value, datetime):
+            return value.strftime("%d/%m/%Y %H:%M")
+        if column in {"datum", "rit_datum"} and isinstance(value, date):
             return value.strftime("%d-%m-%Y")
+        if isinstance(value, time):
+            return value.strftime("%H:%M")
         time_like_column = (
             "tijd" in column
             or column.startswith("netto_")
@@ -161,6 +176,9 @@ class DuckDBAnalyticsService:
             control_id,
             {"title": f"Controle {control_id}", "entity": "rit", "metric_label": "Afwijkingen"},
         )
+
+    def is_deviation_control(self, control_id: int | None) -> bool:
+        return control_id is not None and int(control_id) not in NON_DEVIATION_CONTROL_IDS
 
     def get_current_run_ids(self, client_slug: str) -> list[RunOption]:
         path_glob = self._dataset_glob(client_slug, "manifest")
@@ -209,7 +227,9 @@ class DuckDBAnalyticsService:
                 deviation_query = f"""
                     SELECT COUNT(DISTINCT entity_id)
                     FROM read_parquet('{controls_glob}')
-                    WHERE is_deviation = TRUE {self._run_filter_sql(stuurtabel_id)}
+                    WHERE is_deviation = TRUE
+                      AND COALESCE(controle_id, -1) NOT IN ({", ".join(str(control_id) for control_id in sorted(NON_DEVIATION_CONTROL_IDS))})
+                      {self._run_filter_sql(stuurtabel_id)}
                 """
                 total_deviations = conn.execute(deviation_query).fetchone()[0]
             if total_checked:
@@ -222,20 +242,55 @@ class DuckDBAnalyticsService:
             )
 
     def get_control_breakdown(self, client_slug: str, stuurtabel_id: int | None = None):
-        _, control_dataset = self._dataset_family(client_slug, stuurtabel_id)
-        path_glob = self._dataset_glob(client_slug, control_dataset)
-        if not self._table_exists(path_glob):
-            return []
+        breakdown = []
+        executed_controls = self.get_executed_controls(client_slug, stuurtabel_id)
+        for control in executed_controls:
+            if not self.is_deviation_control(control.control_id):
+                continue
+            control_id = int(control.control_id)
+            total = self.get_control_deviation_count(client_slug, control_id, stuurtabel_id)
+            definition = self.get_control_definition(control_id)
+            control_name = control.label.split(" - ", 1)[1] if " - " in control.label else definition["title"]
+            total_checked = self.get_control_checked_count(client_slug, control_id, stuurtabel_id)
+            deviation_percentage = round((100.0 * total / total_checked), 2) if total_checked else 0.0
+            breakdown.append(
+                {
+                    "control_id": control_id,
+                    "control_name": control_name,
+                    "total_deviations": total,
+                    "total_checked": total_checked,
+                    "deviation_percentage": deviation_percentage,
+                }
+            )
+        return breakdown
 
+    def get_control_deviation_count(self, client_slug: str, control_id: int, stuurtabel_id: int | None = None) -> int:
+        path_glob, _checked_condition, deviation_condition = self._control_trend_query_parts(client_slug, control_id, stuurtabel_id)
+        if path_glob is None or deviation_condition is None or not self._table_exists(path_glob):
+            return 0
+
+        filter_sql = self._run_filter_sql(stuurtabel_id)
         with self.connect() as conn:
             query = f"""
-                SELECT controle_id, COUNT(*) AS total
+                SELECT COUNT(*)
                 FROM read_parquet('{path_glob}')
-                WHERE is_deviation = TRUE {self._run_filter_sql(stuurtabel_id)}
-                GROUP BY controle_id
-                ORDER BY controle_id
+                WHERE {deviation_condition} {filter_sql}
             """
-            return conn.execute(query).fetchall()
+            return conn.execute(query).fetchone()[0] or 0
+
+    def get_control_checked_count(self, client_slug: str, control_id: int, stuurtabel_id: int | None = None) -> int:
+        path_glob, checked_condition, _deviation_condition = self._control_trend_query_parts(client_slug, control_id, stuurtabel_id)
+        if path_glob is None or checked_condition is None or not self._table_exists(path_glob):
+            return 0
+
+        filter_sql = self._run_filter_sql(stuurtabel_id)
+        with self.connect() as conn:
+            query = f"""
+                SELECT COUNT(*)
+                FROM read_parquet('{path_glob}')
+                WHERE {checked_condition} {filter_sql}
+            """
+            return conn.execute(query).fetchone()[0] or 0
 
     def get_executed_controls(self, client_slug: str, stuurtabel_id: int | None = None):
         path_glob = self._dataset_glob(client_slug, "executed_controls")
@@ -343,6 +398,182 @@ class DuckDBAnalyticsService:
                 rows,
                 total_rows,
             )
+
+    def get_control_1_trend(self, client_slug: str, stuurtabel_id: int | None = None, months: int = 6):
+        selected_run = self.get_run_option(client_slug, stuurtabel_id) if stuurtabel_id is not None else None
+        current_runs = self.get_current_run_ids(client_slug)
+        if not current_runs:
+            return None, []
+
+        if selected_run is not None and selected_run.soortvervoer:
+            current_runs = [
+                run for run in current_runs
+                if (run.soortvervoer or "").upper() == (selected_run.soortvervoer or "").upper()
+            ]
+
+        if stuurtabel_id is not None:
+            selected_index = next((index for index, run in enumerate(current_runs) if run.stuurtabel_id == stuurtabel_id), None)
+            if selected_index is None:
+                return None, []
+        else:
+            selected_index = 0
+
+        previous_run = current_runs[selected_index + 1] if selected_index + 1 < len(current_runs) else None
+        trend_runs_desc = current_runs[selected_index:selected_index + max(int(months), 1)]
+        trend_runs = list(reversed(trend_runs_desc))
+        trend_ids = [run.stuurtabel_id for run in trend_runs]
+        if not trend_ids:
+            return previous_run, []
+
+        path_glob = self._dataset_glob(client_slug, self._dataset_family(client_slug, stuurtabel_id)[0])
+        if not self._table_exists(path_glob):
+            return previous_run, []
+
+        id_list = ", ".join(str(int(run_id)) for run_id in trend_ids)
+        with self.connect() as conn:
+            query = f"""
+                SELECT
+                    stuurtabel_id,
+                    COUNT(*) AS total_checked,
+                    SUM(CASE WHEN COALESCE(resultaat_1, 0) <> 0 THEN 1 ELSE 0 END) AS total_deviations
+                FROM read_parquet('{path_glob}')
+                WHERE stuurtabel_id IN ({id_list})
+                GROUP BY stuurtabel_id
+            """
+            row_map = {
+                row[0]: {
+                    "total_checked": row[1] or 0,
+                    "total_deviations": row[2] or 0,
+                }
+                for row in conn.execute(query).fetchall()
+            }
+
+        trend_points = []
+        for run in trend_runs:
+            counts = row_map.get(run.stuurtabel_id, {"total_checked": 0, "total_deviations": 0})
+            total_checked = counts["total_checked"]
+            total_deviations = counts["total_deviations"]
+            trend_points.append(
+                ControlTrendPoint(
+                    stuurtabel_id=run.stuurtabel_id,
+                    label=run.omschrijving or str(run.stuurtabel_id),
+                    total_deviations=total_deviations,
+                    total_checked=total_checked,
+                    deviation_percentage=round((100.0 * total_deviations / total_checked), 2) if total_checked else 0.0,
+                )
+            )
+
+        return previous_run, trend_points
+
+    def get_control_trend(self, client_slug: str, control_id: int, stuurtabel_id: int | None = None, months: int = 6):
+        selected_run = self.get_run_option(client_slug, stuurtabel_id) if stuurtabel_id is not None else None
+        current_runs = self.get_current_run_ids(client_slug)
+        if not current_runs:
+            return None, []
+
+        if selected_run is not None and selected_run.soortvervoer:
+            current_runs = [
+                run for run in current_runs
+                if (run.soortvervoer or "").upper() == (selected_run.soortvervoer or "").upper()
+            ]
+
+        if stuurtabel_id is not None:
+            selected_index = next((index for index, run in enumerate(current_runs) if run.stuurtabel_id == stuurtabel_id), None)
+            if selected_index is None:
+                return None, []
+        else:
+            selected_index = 0
+
+        previous_run = current_runs[selected_index + 1] if selected_index + 1 < len(current_runs) else None
+        trend_runs_desc = current_runs[selected_index:selected_index + max(int(months), 1)]
+        trend_runs = list(reversed(trend_runs_desc))
+        trend_ids = [run.stuurtabel_id for run in trend_runs]
+        if not trend_ids:
+            return previous_run, []
+
+        path_glob, checked_condition, deviation_condition = self._control_trend_query_parts(client_slug, control_id, stuurtabel_id)
+        if path_glob is None or not self._table_exists(path_glob):
+            return previous_run, []
+
+        id_list = ", ".join(str(int(run_id)) for run_id in trend_ids)
+        with self.connect() as conn:
+            query = f"""
+                SELECT
+                    stuurtabel_id,
+                    SUM(CASE WHEN {checked_condition} THEN 1 ELSE 0 END) AS total_checked,
+                    SUM(CASE WHEN {deviation_condition} THEN 1 ELSE 0 END) AS total_deviations
+                FROM read_parquet('{path_glob}')
+                WHERE stuurtabel_id IN ({id_list})
+                GROUP BY stuurtabel_id
+            """
+            row_map = {
+                row[0]: {
+                    "total_checked": row[1] or 0,
+                    "total_deviations": row[2] or 0,
+                }
+                for row in conn.execute(query).fetchall()
+            }
+
+        trend_points = []
+        for run in trend_runs:
+            counts = row_map.get(run.stuurtabel_id, {"total_checked": 0, "total_deviations": 0})
+            total_checked = counts["total_checked"]
+            total_deviations = counts["total_deviations"]
+            trend_points.append(
+                ControlTrendPoint(
+                    stuurtabel_id=run.stuurtabel_id,
+                    label=run.omschrijving or str(run.stuurtabel_id),
+                    total_deviations=total_deviations,
+                    total_checked=total_checked,
+                    deviation_percentage=round((100.0 * total_deviations / total_checked), 2) if total_checked else 0.0,
+                )
+            )
+
+        return previous_run, trend_points
+
+    def _control_trend_query_parts(self, client_slug: str, control_id: int, stuurtabel_id: int | None):
+        if control_id == 1:
+            return self._dataset_glob(client_slug, "ritten_detail"), "TRUE", "COALESCE(resultaat_1, 0) <> 0"
+        if control_id == 8:
+            return (
+                self._dataset_glob(client_slug, "ritten_detail"),
+                "geplande_instap_tijd IS NOT NULL AND geplande_uitstap_tijd IS NOT NULL",
+                "geplande_instap_tijd IS NOT NULL AND geplande_uitstap_tijd IS NOT NULL AND COALESCE(resultaat_8, 0) <> 0",
+            )
+        if control_id == 10:
+            return (
+                self._dataset_glob(client_slug, "routes_detail"),
+                "route_nummer IS NOT NULL",
+                "route_nummer IS NOT NULL AND COALESCE(resultaat_10, 0) <> 0",
+            )
+        if control_id == 11:
+            return self._dataset_glob(client_slug, "ritten_detail"), "TRUE", "COALESCE(resultaat_11, 0) > 1"
+        if control_id == 1004:
+            return self._dataset_glob(client_slug, "va_ritten_detail"), "TRUE", "COALESCE(resultaat_1004, 0) <> 0"
+        if control_id == 1005:
+            return self._dataset_glob(client_slug, "va_ritten_detail"), "TRUE", "COALESCE(resultaat_1005, 0) <> 0"
+
+        definition = self.get_control_definition(control_id)
+        entity = definition["entity"]
+        detail_dataset = "routes_detail" if entity == "route" else self._dataset_family(client_slug, stuurtabel_id)[0]
+        path_glob = self._dataset_glob(client_slug, detail_dataset)
+        result_column = f"resultaat_{control_id}"
+        text_column = f"tekst_{control_id}"
+
+        with self.connect() as conn:
+            if not self._table_exists(path_glob):
+                return None, None, None
+            columns = self._dataset_columns(conn, path_glob)
+            if result_column not in columns and text_column not in columns:
+                return None, None, None
+
+        deviation_parts = []
+        if result_column in columns:
+            deviation_parts.append(f"COALESCE({result_column}, 0) <> 0")
+        if text_column in columns:
+            deviation_parts.append(f"{text_column} IS NOT NULL")
+        deviation_condition = " OR ".join(deviation_parts) if deviation_parts else "FALSE"
+        return path_glob, "TRUE", f"({deviation_condition})"
 
     def get_control_8_report(self, client_slug: str, stuurtabel_id: int | None = None, limit: int = 100, offset: int = 0):
         path_glob = self._dataset_glob(client_slug, "ritten_detail")
@@ -1263,7 +1494,7 @@ class DuckDBAnalyticsService:
                     ("postcode_laatste", "PostcodeLaatste"),
                     (control_value_column, "Minuten leeg"),
                 ]
-            elif control_id in {16, 17, 22}:
+            elif control_id in {2, 16, 17, 19, 22}:
                 header_map = [
                     ("datum", "Datum"),
                     ("klant_nummer", "KlantNummer"),

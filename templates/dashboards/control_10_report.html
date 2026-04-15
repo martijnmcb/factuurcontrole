@@ -32,6 +32,7 @@
                 </select>
             </div>
         </form>
+        {% include "dashboards/includes/control_nav_buttons.html" %}
         <a href="{% url 'client_dashboard' client.slug %}?stuurtabel_id={{ selected_run_id }}" class="btn btn-outline-light">Back to dashboard</a>
     </div>
 </div>
@@ -47,6 +48,7 @@
         <div class="metric-card h-100">
             <span>Herplanning sneller</span>
             <strong>{{ summary.total_deviations }}</strong>
+            {% include "dashboards/includes/control_trend_block.html" %}
         </div>
     </div>
     <div class="col-md-2">
