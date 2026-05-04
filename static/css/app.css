@@ -3,7 +3,7 @@
     --panel: rgba(13, 31, 47, 0.88);
     --panel-border: rgba(174, 200, 221, 0.18);
     --text: #edf6ff;
-    --muted: #93a8bb;
+    --muted: #c1d3e3;
     --accent: #ffd166;
     --accent-2: #4ecdc4;
 }
@@ -52,6 +52,14 @@ body {
     margin-bottom: 0.5rem;
 }
 
+.text-light-emphasis {
+    color: var(--muted) !important;
+}
+
+.text-secondary {
+    color: var(--muted) !important;
+}
+
 .metric-card strong {
     font-size: clamp(1.7rem, 4vw, 2.4rem);
     line-height: 1;
@@ -85,4 +93,56 @@ body {
     border-radius: 1rem;
     overflow: hidden;
     border: 1px solid var(--panel-border);
+}
+
+.route-detail-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+}
+
+.route-detail-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(2, 9, 15, 0.72);
+    backdrop-filter: blur(4px);
+}
+
+.route-detail-modal__dialog {
+    position: relative;
+    z-index: 1;
+    width: min(96vw, 1500px);
+    max-height: 88vh;
+    margin: 4vh auto;
+    overflow: auto;
+}
+
+.table-responsive,
+.route-detail-modal__dialog {
+    scrollbar-color: rgba(193, 211, 227, 0.75) rgba(255, 255, 255, 0.08);
+    scrollbar-width: thin;
+}
+
+.table-responsive::-webkit-scrollbar,
+.route-detail-modal__dialog::-webkit-scrollbar {
+    height: 12px;
+    width: 12px;
+}
+
+.table-responsive::-webkit-scrollbar-track,
+.route-detail-modal__dialog::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+}
+
+.table-responsive::-webkit-scrollbar-thumb,
+.route-detail-modal__dialog::-webkit-scrollbar-thumb {
+    background: rgba(193, 211, 227, 0.75);
+    border-radius: 999px;
+    border: 2px solid rgba(8, 20, 32, 0.35);
+}
+
+.table-responsive::-webkit-scrollbar-thumb:hover,
+.route-detail-modal__dialog::-webkit-scrollbar-thumb:hover {
+    background: rgba(237, 246, 255, 0.9);
 }

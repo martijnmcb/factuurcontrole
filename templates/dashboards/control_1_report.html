@@ -213,6 +213,121 @@
     </div>
 </div>
 {% endif %}
+{% elif template_variant == "description_only" %}
+<div class="row g-4 mb-4">
+    <div class="col-lg-8 col-xl-6">
+        <div class="panel h-100">
+            <p class="eyebrow mb-2">Uitleg controle</p>
+            <p class="mb-0 text-light-emphasis">{{ control_explanation }}</p>
+        </div>
+    </div>
+</div>
+{% elif template_variant == "control_5" %}
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="metric-card h-100">
+            <span>Aantal geteste routes</span>
+            <strong>{{ summary.total_checked }}</strong>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="metric-card h-100">
+            <span>{{ control_metric_label|default:"Afwijkingen" }}</span>
+            <strong>{{ summary.total_deviations }}</strong>
+            {% include "dashboards/includes/control_trend_block.html" %}
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="metric-card h-100">
+            <span>Percentage uitval</span>
+            <strong>{{ summary.deviation_percentage }}%</strong>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="panel h-100">
+            <p class="eyebrow mb-2">Uitleg controle</p>
+            <p class="mb-0 text-light-emphasis">{{ control_explanation }}</p>
+        </div>
+    </div>
+</div>
+
+<div class="panel p-4">
+    <div class="d-flex justify-content-end mb-3">
+        <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}export=csv">Export CSV</a>
+        <a class="btn btn-outline-light btn-sm ms-2" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}export=xlsx">Export XLSX</a>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped align-middle mb-0 report-table sortable-table" id="control5RoutesTable">
+            <thead>
+                <tr>
+                    <th>Datum</th>
+                    <th>RouteNummer</th>
+                    <th>RouteNaam</th>
+                    <th>Van</th>
+                    <th>Via</th>
+                    <th>Naar</th>
+                    <th>Foutmelding</th>
+                    <th>Lopers</th>
+                    <th>Rollers</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                    <tr class="control-5-route-row" data-route-nummer="{{ row.route_nummer }}" data-route-date="{{ row.route_date }}" data-detail-url="{{ control5_route_detail_url }}?stuurtabel_id={{ selected_run_id }}&route_nummer={{ row.route_nummer|urlencode }}&route_date={{ row.route_date|urlencode }}">
+                        <td data-sort-value="{{ row.route_date }}">{{ row.route_date_label }}</td>
+                        <td>{{ row.route_nummer }}</td>
+                        <td>{{ row.route_naam }}</td>
+                        <td>{{ row.van }}</td>
+                        <td>{{ row.via }}</td>
+                        <td>{{ row.naar }}</td>
+                        <td>{{ row.foutmelding }}</td>
+                        <td>{{ row.lopers }}</td>
+                        <td>{{ row.rollers }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="9" class="text-center text-light-emphasis">No rows found for this control and stuurtabel.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% if total_rows %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3">
+    <p class="mb-0 text-light-emphasis small">Toont {{ rows|length }} van {{ total_rows }} rijen. Pagina {{ page }} van {{ total_pages }}.</p>
+    <div class="d-flex gap-2">
+        {% if has_previous %}
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ previous_page }}">Vorige</a>
+        {% endif %}
+        {% if has_next %}
+            <a class="btn btn-outline-light btn-sm" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ next_page }}">Volgende</a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<div id="control5RouteModal" class="route-detail-modal d-none" aria-hidden="true">
+    <div class="route-detail-modal__backdrop" data-close-control5-modal></div>
+    <div class="route-detail-modal__dialog panel">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+            <div>
+                <p class="eyebrow mb-2">Route details</p>
+                <h2 class="h4 mb-1" id="control5ModalTitle">Route</h2>
+                <p class="mb-0 text-light-emphasis" id="control5ModalSubtitle"></p>
+            </div>
+            <button type="button" class="btn btn-outline-light btn-sm" data-close-control5-modal>Sluiten</button>
+        </div>
+        <div class="small text-light-emphasis mb-3 d-none" id="control5ModalLoading">Ritdetails laden...</div>
+        <div class="small text-light-emphasis mb-3 d-none" id="control5ModalError"></div>
+        <div class="table-responsive">
+            <table class="table table-dark table-striped align-middle mb-0 report-table sortable-table" id="control5ModalTable">
+                <thead id="control5ModalHead"></thead>
+                <tbody id="control5ModalBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
 {% elif template_variant == "generic" %}
 <div class="row g-4 mb-4">
     <div class="col-md-3">

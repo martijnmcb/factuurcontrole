@@ -8,6 +8,8 @@ import re
 import duckdb
 from django.conf import settings
 
+from .models import ControlContent
+
 
 @dataclass
 class DashboardMetrics:
@@ -78,18 +80,22 @@ CONTROL_DEFINITIONS = {
     1: {"title": "Controle 1 - Bestelling ook in SW?", "entity": "rit", "metric_label": "Afwijkingen"},
     2: {"title": "Controle 2 - Tijdig afwezig gemeld?", "entity": "rit", "metric_label": "Tijdig afwezig gemeld, wel op factuur"},
     3: {"title": "Controle 3 - Routes zonder reizigers", "entity": "route", "metric_label": "Routes zonder reizigers"},
+    4: {"title": "Controle 4", "entity": "rit", "metric_label": "Geen output"},
+    5: {"title": "Controle 5", "entity": "route", "metric_label": "Afwijkingen"},
     7: {"title": "Controle 7 - RDW Controle kenteken", "entity": "route", "metric_label": "Afwijkingen"},
     8: {"title": "Controle 8 - Overschrijden reistijd", "entity": "rit", "metric_label": "Overschrijden max reistijd"},
     9: {"title": "Controle 9 - Controle stiptheid", "entity": "rit", "metric_label": "Afwijkingen"},
     10: {"title": "Controle 10 - Routekaart (optimalisatie)", "entity": "route", "metric_label": "Herplanning sneller"},
     11: {"title": "Controle 11 - Emissie klasse", "entity": "rit", "metric_label": "Afwijkingen"},
     12: {"title": "Controle 12 - Brandstofsoort", "entity": "rit", "metric_label": "Afwijkingen"},
+    13: {"title": "Controle 13", "entity": "rit", "metric_label": "Overzicht"},
     14: {"title": "Controle 14 - Route overlap", "entity": "route", "metric_label": "Meer dan 1 route gelijktijdig in voertuig"},
     15: {"title": "Controle 15 - Leegrijd in route", "entity": "route", "metric_label": "Afwijkingen"},
     16: {"title": "Controle 16 - Indicatie rolstoel", "entity": "rit", "metric_label": "Afwijkingen"},
     17: {"title": "Controle 17 - Indicatie solo", "entity": "rit", "metric_label": "Afwijkingen"},
     18: {"title": "Controle 18 - Postcode controle", "entity": "rit", "metric_label": "Afwijkingen"},
     19: {"title": "Controle 19 - Ritten dubbel op factuur", "entity": "rit", "metric_label": "Afwijkingen"},
+    20: {"title": "Controle 20 - Kosten per rit", "entity": "route", "metric_label": "Kosten per rit"},
     21: {"title": "Controle 21 - Leegtijd tussen routes", "entity": "route", "metric_label": "Afwijkingen"},
     22: {"title": "Controle 22 - Solo klant ook solo vervoerd?", "entity": "rit", "metric_label": "Afwijkingen"},
     23: {"title": "Controle 23 - Indicatie controle", "entity": "rit", "metric_label": "Afwijkingen"},
@@ -144,6 +150,33 @@ class DuckDBAnalyticsService:
     def _format_cell(self, column: str, value):
         if value is None:
             return ""
+        if column == "datum":
+            if isinstance(value, datetime):
+                return value.strftime("%d-%m-%Y")
+            if isinstance(value, str):
+                normalized = value.strip()
+                if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", normalized):
+                    try:
+                        parsed = datetime.fromisoformat(normalized)
+                        return parsed.strftime("%d-%m-%Y")
+                    except ValueError:
+                        pass
+        if isinstance(value, str):
+            normalized = value.strip()
+            if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", normalized):
+                try:
+                    parsed = datetime.fromisoformat(normalized)
+                    if column in {"bestelde_aankomsttijd", "bestelde_vertrektijd", "geplande_instap_tijd", "geplande_uitstap_tijd"}:
+                        return parsed.strftime("%H:%M")
+                    return parsed.strftime("%d/%m/%Y %H:%M")
+                except ValueError:
+                    pass
+            if re.match(r"^\d{4}-\d{2}-\d{2}$", normalized):
+                try:
+                    parsed_date = date.fromisoformat(normalized)
+                    return parsed_date.strftime("%d-%m-%Y")
+                except ValueError:
+                    pass
         if isinstance(value, datetime):
             return value.strftime("%d/%m/%Y %H:%M")
         if column in {"datum", "rit_datum"} and isinstance(value, date):
@@ -176,6 +209,136 @@ class DuckDBAnalyticsService:
             control_id,
             {"title": f"Controle {control_id}", "entity": "rit", "metric_label": "Afwijkingen"},
         )
+
+    def get_control_content(self, control_id: int, soortvervoer: str | None = None) -> ControlContent | None:
+        normalized = (soortvervoer or "").strip().upper()
+        queryset = ControlContent.objects.filter(control_id=control_id, is_active=True)
+        if normalized:
+            scoped = queryset.filter(soortvervoer=normalized).first()
+            if scoped:
+                return scoped
+        return queryset.filter(soortvervoer="").first()
+
+    def get_control_5_report(self, client_slug: str, stuurtabel_id: int | None, limit: int = 100, offset: int = 0):
+        path_glob = self._dataset_glob(client_slug, "routes_detail")
+        if not self._table_exists(path_glob):
+            return ControlReportSummary(), [], 0
+
+        with self.connect() as conn:
+            columns = self._dataset_columns(conn, path_glob)
+            if "tekst_5" not in columns and "resultaat_5" not in columns:
+                return ControlReportSummary(), [], 0
+
+            filter_sql = self._run_filter_sql(stuurtabel_id)
+            deviation_condition = "COALESCE(resultaat_5, 0) <> 0 OR tekst_5 IS NOT NULL"
+            total_checked = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM read_parquet('{path_glob}')
+                WHERE 1=1 {filter_sql}
+                """
+            ).fetchone()[0]
+            total_deviations = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM read_parquet('{path_glob}')
+                WHERE ({deviation_condition}) {filter_sql}
+                """
+            ).fetchone()[0]
+            total_rows = total_deviations
+            deviation_percentage = round((100.0 * total_deviations / total_checked), 3) if total_checked else 0.0
+
+            query = f"""
+                SELECT
+                    CAST(datum AS DATE) AS route_date,
+                    route_nummer,
+                    route_naam,
+                    postcode_eerste,
+                    postcode_via,
+                    postcode_laatste,
+                    tekst_5,
+                    aantal_lopers,
+                    aantal_rollers
+                FROM read_parquet('{path_glob}')
+                WHERE ({deviation_condition}) {filter_sql}
+                ORDER BY route_date, route_nummer
+                LIMIT {int(limit)} OFFSET {int(offset)}
+            """
+            rows = []
+            for row in conn.execute(query).fetchall():
+                route_date = row[0]
+                rows.append(
+                    {
+                        "route_date": route_date.strftime("%Y-%m-%d") if route_date else "",
+                        "route_date_label": route_date.strftime("%d-%m-%Y") if route_date else "",
+                        "route_nummer": row[1] or "",
+                        "route_naam": row[2] or "",
+                        "van": row[3] or "",
+                        "via": row[4] or "",
+                        "naar": row[5] or "",
+                        "foutmelding": row[6] or "",
+                        "lopers": row[7] or 0,
+                        "rollers": row[8] or 0,
+                    }
+                )
+
+            return (
+                ControlReportSummary(
+                    total_checked=total_checked or 0,
+                    total_deviations=total_deviations or 0,
+                    deviation_percentage=deviation_percentage,
+                ),
+                rows,
+                total_rows or 0,
+            )
+
+    def get_control_5_route_detail(self, client_slug: str, stuurtabel_id: int | None, route_nummer: str, route_date: str):
+        path_glob = self._dataset_glob(client_slug, "ritten_detail")
+        if not self._table_exists(path_glob):
+            return []
+
+        with self.connect() as conn:
+            query = f"""
+                SELECT
+                    CAST(datum AS DATE) AS datum,
+                    route_nummer,
+                    bestelde_aankomsttijd,
+                    bestelde_vertrektijd,
+                    klant_nummer,
+                    reiziger_naam,
+                    locatie_van,
+                    plaats_van,
+                    locatie_naar,
+                    plaats_naar,
+                    geplande_instap_tijd,
+                    geplande_uitstap_tijd,
+                    afwezigheids_melding
+                FROM read_parquet('{path_glob}')
+                WHERE route_nummer = ?
+                  AND CAST(datum AS DATE) = CAST(? AS DATE)
+                  {self._run_filter_sql(stuurtabel_id)}
+                ORDER BY COALESCE(geplande_instap_tijd, bestelde_vertrektijd), klant_nummer, reiziger_naam
+            """
+            rows = []
+            for row in conn.execute(query, [route_nummer, route_date]).fetchall():
+                rows.append(
+                    (
+                        self._format_cell("datum", row[0]),
+                        row[1] or "",
+                        self._format_cell("bestelde_aankomsttijd", row[2]),
+                        self._format_cell("bestelde_vertrektijd", row[3]),
+                        row[4] or "",
+                        row[5] or "",
+                        self._strip_location_code(row[6]),
+                        row[7] or "",
+                        self._strip_location_code(row[8]),
+                        row[9] or "",
+                        self._format_cell("geplande_instap_tijd", row[10]),
+                        self._format_cell("geplande_uitstap_tijd", row[11]),
+                        row[12] or "",
+                    )
+                )
+            return rows
 
     def is_deviation_control(self, control_id: int | None) -> bool:
         return control_id is not None and int(control_id) not in NON_DEVIATION_CONTROL_IDS
@@ -910,6 +1073,13 @@ class DuckDBAnalyticsService:
 
         filter_sql = self._run_filter_sql(stuurtabel_id)
         valid_plate_sql = "kenteken IS NOT NULL AND TRIM(kenteken) NOT IN ('', '00-00-00', 'XX-XX-XX', '-  -  -', '  -  -  ')"
+        emission_class_expr = """
+            CASE
+                WHEN controlewaarde_11 IN ('Z', 'Z/Z') THEN 'Z'
+                WHEN controlewaarde_11 IN ('6', '6/6') THEN '6'
+                ELSE controlewaarde_11
+            END
+        """
         client_km_expr = (
             "COALESCE(km_tarief, 0)"
             " + COALESCE(extrakm_start, 0)"
@@ -938,7 +1108,7 @@ class DuckDBAnalyticsService:
                         CAST(datum AS DATE) AS datum,
                         route_nummer,
                         kenteken,
-                        controlewaarde_11 AS emission_class
+                        {emission_class_expr} AS emission_class
                     FROM read_parquet('{path_glob}')
                     WHERE controlewaarde_11 IS NOT NULL
                       AND {valid_plate_sql}
@@ -954,7 +1124,7 @@ class DuckDBAnalyticsService:
                 ),
                 class_client_km AS (
                     SELECT
-                        controlewaarde_11 AS emission_class,
+                        {emission_class_expr} AS emission_class,
                         SUM({client_km_expr}) AS client_km
                     FROM read_parquet('{path_glob}')
                     WHERE controlewaarde_11 IS NOT NULL
@@ -991,12 +1161,12 @@ class DuckDBAnalyticsService:
             total_vehicle_rows_query = f"""
                 SELECT COUNT(*)
                 FROM (
-                    SELECT kenteken, controlewaarde_11
+                    SELECT kenteken, {emission_class_expr} AS emission_class
                     FROM read_parquet('{path_glob}')
                     WHERE controlewaarde_11 IS NOT NULL
                       AND {valid_plate_sql}
                       {filter_sql}
-                    GROUP BY kenteken, controlewaarde_11
+                    GROUP BY kenteken, emission_class
                 ) t
             """
             total_vehicle_rows = conn.execute(total_vehicle_rows_query).fetchone()[0]
@@ -1004,7 +1174,7 @@ class DuckDBAnalyticsService:
             detail_query = f"""
                 SELECT
                     kenteken,
-                    controlewaarde_11 AS emission_class,
+                    {emission_class_expr} AS emission_class,
                     COUNT(DISTINCT CAST(datum AS DATE)) AS inzetdagen,
                     COUNT(DISTINCT route_nummer) AS routes,
                     COUNT(*) AS rides
@@ -1012,7 +1182,7 @@ class DuckDBAnalyticsService:
                 WHERE controlewaarde_11 IS NOT NULL
                   AND {valid_plate_sql}
                   {filter_sql}
-                GROUP BY kenteken, controlewaarde_11
+                GROUP BY kenteken, emission_class
                 ORDER BY emission_class, rides DESC, kenteken
                 LIMIT {int(limit)} OFFSET {int(offset)}
             """
@@ -1262,6 +1432,516 @@ class DuckDBAnalyticsService:
                 distance_rows,
             )
 
+    def get_control_12_report(self, client_slug: str, stuurtabel_id: int | None = None):
+        path_glob = self._dataset_glob(client_slug, "ritten_detail")
+        if not self._table_exists(path_glob):
+            return ControlReportSummary(), 0, [], [], []
+
+        filter_sql = self._run_filter_sql(stuurtabel_id)
+        with self.connect() as conn:
+            total_checked = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM read_parquet('{path_glob}')
+                WHERE 1=1 {filter_sql}
+                """
+            ).fetchone()[0]
+
+            fuel_types = [
+                row[0]
+                for row in conn.execute(
+                    f"""
+                    SELECT DISTINCT controlewaarde_12
+                    FROM read_parquet('{path_glob}')
+                    WHERE controlewaarde_12 IS NOT NULL
+                      AND TRIM(CAST(controlewaarde_12 AS VARCHAR)) <> ''
+                      {filter_sql}
+                    ORDER BY controlewaarde_12
+                    """
+                ).fetchall()
+            ]
+
+            classified_rides = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM read_parquet('{path_glob}')
+                WHERE controlewaarde_12 IS NOT NULL
+                  AND TRIM(CAST(controlewaarde_12 AS VARCHAR)) <> ''
+                  {filter_sql}
+                """
+            ).fetchone()[0]
+
+            daily_rows_raw = conn.execute(
+                f"""
+                SELECT
+                    CAST(datum AS DATE) AS report_date,
+                    controlewaarde_12,
+                    COUNT(*) AS rides
+                FROM read_parquet('{path_glob}')
+                WHERE controlewaarde_12 IS NOT NULL
+                  AND TRIM(CAST(controlewaarde_12 AS VARCHAR)) <> ''
+                  {filter_sql}
+                GROUP BY 1, 2
+                ORDER BY 1, 2
+                """
+            ).fetchall()
+
+            daily_totals_raw = conn.execute(
+                f"""
+                SELECT
+                    CAST(datum AS DATE) AS report_date,
+                    COUNT(*) AS rides
+                FROM read_parquet('{path_glob}')
+                WHERE controlewaarde_12 IS NOT NULL
+                  AND TRIM(CAST(controlewaarde_12 AS VARCHAR)) <> ''
+                  {filter_sql}
+                GROUP BY 1
+                ORDER BY 1
+                """
+            ).fetchall()
+
+            daily_totals = {
+                row[0]: row[1]
+                for row in daily_totals_raw
+            }
+            daily_matrix: dict[date, dict[str, int]] = {}
+            for report_date, fuel_type, rides in daily_rows_raw:
+                daily_matrix.setdefault(report_date, {})[fuel_type] = rides
+
+            daily_rows = []
+            for report_date in sorted(daily_matrix):
+                total_rides = daily_totals.get(report_date, 0)
+                cells = []
+                for fuel_type in fuel_types:
+                    rides = daily_matrix[report_date].get(fuel_type, 0)
+                    percentage = round((100.0 * rides / total_rides), 2) if total_rides else 0.0
+                    cells.append(
+                        {
+                            "fuel_type": fuel_type,
+                            "rides": rides,
+                            "percentage": percentage,
+                        }
+                    )
+                daily_rows.append(
+                    {
+                        "label": report_date.strftime("%d-%m-%Y") if report_date else "",
+                        "sort_value": report_date.strftime("%Y-%m-%d") if report_date else "",
+                        "cells": cells,
+                        "total": total_rides,
+                    }
+                )
+
+            monthly_rows_raw = conn.execute(
+                f"""
+                SELECT
+                    STRFTIME(CAST(datum AS DATE), '%Y-%m') AS report_month,
+                    controlewaarde_12,
+                    COUNT(*) AS rides
+                FROM read_parquet('{path_glob}')
+                WHERE controlewaarde_12 IS NOT NULL
+                  AND TRIM(CAST(controlewaarde_12 AS VARCHAR)) <> ''
+                  {filter_sql}
+                GROUP BY 1, 2
+                ORDER BY 1, 2
+                """
+            ).fetchall()
+
+            monthly_totals_raw = conn.execute(
+                f"""
+                SELECT
+                    STRFTIME(CAST(datum AS DATE), '%Y-%m') AS report_month,
+                    COUNT(*) AS rides
+                FROM read_parquet('{path_glob}')
+                WHERE controlewaarde_12 IS NOT NULL
+                  AND TRIM(CAST(controlewaarde_12 AS VARCHAR)) <> ''
+                  {filter_sql}
+                GROUP BY 1
+                ORDER BY 1
+                """
+            ).fetchall()
+
+            monthly_totals = {row[0]: row[1] for row in monthly_totals_raw}
+            monthly_matrix: dict[str, dict[str, int]] = {}
+            for report_month, fuel_type, rides in monthly_rows_raw:
+                monthly_matrix.setdefault(report_month, {})[fuel_type] = rides
+
+            monthly_rows = []
+            for report_month in sorted(monthly_matrix):
+                total_rides = monthly_totals.get(report_month, 0)
+                cells = []
+                for fuel_type in fuel_types:
+                    rides = monthly_matrix[report_month].get(fuel_type, 0)
+                    percentage = round((100.0 * rides / total_rides), 2) if total_rides else 0.0
+                    cells.append(
+                        {
+                            "fuel_type": fuel_type,
+                            "rides": rides,
+                            "percentage": percentage,
+                        }
+                    )
+                monthly_rows.append(
+                    {
+                        "label": report_month,
+                        "sort_value": report_month,
+                        "cells": cells,
+                        "total": total_rides,
+                    }
+                )
+
+            return (
+                ControlReportSummary(
+                    total_checked=total_checked or 0,
+                    total_deviations=classified_rides or 0,
+                    deviation_percentage=round((100.0 * classified_rides / total_checked), 2) if total_checked else 0.0,
+                ),
+                classified_rides or 0,
+                fuel_types,
+                daily_rows,
+                monthly_rows,
+            )
+
+    def get_control_13_report(self, client_slug: str, stuurtabel_id: int | None = None):
+        ritten_glob = self._dataset_glob(client_slug, "ritten_detail")
+        routes_glob = self._dataset_glob(client_slug, "routes_detail")
+        if not self._table_exists(ritten_glob):
+            return {
+                "total_checked": 0,
+                "vehicles": 0,
+                "coverage_percentage": 0.0,
+                "average_age": None,
+            }, [], {"inzetdagen": 0, "passagiers": 0}, []
+
+        filter_sql = self._run_filter_sql(stuurtabel_id)
+        route_filter_sql = self._run_filter_sql(stuurtabel_id, "r.")
+        with self.connect() as conn:
+            summary_row = conn.execute(
+                f"""
+                WITH base AS (
+                    SELECT
+                        kenteken,
+                        controlewaarde_13
+                    FROM read_parquet('{ritten_glob}')
+                    WHERE kenteken IS NOT NULL
+                      AND TRIM(kenteken) <> ''
+                      AND (
+                        controlewaarde_13 IS NOT NULL
+                        OR dempelwaarde_13 IS NOT NULL
+                        OR resultaat_13 IS NOT NULL
+                        OR tekst_13 IS NOT NULL
+                      )
+                      {filter_sql}
+                )
+                SELECT
+                    COUNT(*) AS total_checked,
+                    COUNT(DISTINCT kenteken) AS total_vehicles,
+                    COUNT(DISTINCT CASE WHEN controlewaarde_13 IS NOT NULL THEN kenteken END) AS vehicles_with_age,
+                    AVG(TRY_CAST(controlewaarde_13 AS DOUBLE)) AS average_age
+                FROM base
+                """
+            ).fetchone()
+
+            rows = conn.execute(
+                f"""
+                WITH base AS (
+                    SELECT
+                        kenteken,
+                        CAST(datum AS DATE) AS ritdatum,
+                        dempelwaarde_13,
+                        controlewaarde_13,
+                        tekst_13
+                    FROM read_parquet('{ritten_glob}')
+                    WHERE kenteken IS NOT NULL
+                      AND TRIM(kenteken) <> ''
+                      AND (
+                        controlewaarde_13 IS NOT NULL
+                        OR dempelwaarde_13 IS NOT NULL
+                        OR resultaat_13 IS NOT NULL
+                        OR tekst_13 IS NOT NULL
+                      )
+                      {filter_sql}
+                ),
+                voertuig_type AS (
+                    SELECT
+                        r.kenteken,
+                        MAX(r.voertuigtype) AS voertuigtype
+                    FROM read_parquet('{routes_glob}') r
+                    WHERE r.kenteken IS NOT NULL
+                      AND TRIM(r.kenteken) <> ''
+                      {route_filter_sql}
+                    GROUP BY r.kenteken
+                )
+                SELECT
+                    b.kenteken,
+                    COUNT(DISTINCT b.ritdatum) AS inzetdagen,
+                    COUNT(*) AS vervoerde_passagiers,
+                    MAX(b.dempelwaarde_13) AS drempelwaarde,
+                    MAX(b.controlewaarde_13) AS controlewaarde,
+                    COALESCE(MAX(v.voertuigtype), '') AS voertuigtype,
+                    COALESCE(MAX(b.tekst_13), '') AS inrichting
+                FROM base b
+                LEFT JOIN voertuig_type v ON v.kenteken = b.kenteken
+                GROUP BY b.kenteken
+                ORDER BY b.kenteken
+                """
+            ).fetchall()
+
+            age_distribution_rows = conn.execute(
+                f"""
+                WITH vehicle_age AS (
+                    SELECT
+                        kenteken,
+                        ROUND(AVG(TRY_CAST(controlewaarde_13 AS DOUBLE))) AS age_years
+                    FROM read_parquet('{ritten_glob}')
+                    WHERE kenteken IS NOT NULL
+                      AND TRIM(kenteken) <> ''
+                      AND controlewaarde_13 IS NOT NULL
+                      {filter_sql}
+                    GROUP BY kenteken
+                )
+                SELECT
+                    CAST(age_years AS INTEGER) AS age_years,
+                    COUNT(*) AS vehicles
+                FROM vehicle_age
+                WHERE age_years IS NOT NULL
+                GROUP BY 1
+                ORDER BY 1
+                """
+            ).fetchall()
+
+            report_rows = [
+                {
+                    "kenteken": row[0] or "",
+                    "inzetdagen": row[1] or 0,
+                    "vervoerde_passagiers": row[2] or 0,
+                    "drempelwaarde": self._float_or_none(row[3]),
+                    "controlewaarde": self._float_or_none(row[4]),
+                    "type": row[5] or "",
+                    "inrichting": row[6] or "",
+                }
+                for row in rows
+            ]
+
+            totals = {
+                "inzetdagen": sum(row["inzetdagen"] for row in report_rows),
+                "passagiers": sum(row["vervoerde_passagiers"] for row in report_rows),
+            }
+            total_checked = int(summary_row[0] or 0)
+            total_vehicles = int(summary_row[1] or 0)
+            vehicles_with_age = int(summary_row[2] or 0)
+            average_age = self._float_or_none(summary_row[3])
+            summary = {
+                "total_checked": total_checked,
+                "vehicles": total_vehicles,
+                "coverage_percentage": round((100.0 * vehicles_with_age / total_vehicles), 2) if total_vehicles else 0.0,
+                "average_age": average_age,
+            }
+            age_distribution = [
+                {"label": str(int(row[0])), "value": int(row[1] or 0)}
+                for row in age_distribution_rows
+                if row[0] is not None
+            ]
+            return summary, report_rows, totals, age_distribution
+
+    def get_control_20_report(self, client_slug: str, stuurtabel_id: int | None = None):
+        kentallen_glob = self._dataset_glob(client_slug, "kentallen_route")
+        if not self._table_exists(kentallen_glob):
+            return {
+                "total_checked": 0,
+                "days_with_cost": 0,
+                "coverage_percentage": 0.0,
+                "average_cost": None,
+                "total_rides": 0,
+            }, [], [], []
+
+        filter_sql = self._run_filter_sql(stuurtabel_id)
+        with self.connect() as conn:
+            summary_row = conn.execute(
+                f"""
+                SELECT
+                    COUNT(*) AS total_rows,
+                    COUNT(CASE WHEN TRY_CAST(kosten_rit AS DOUBLE) IS NOT NULL THEN 1 END) AS rows_with_cost,
+                    SUM(COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0)) AS total_rides,
+                    CASE
+                        WHEN SUM(
+                            CASE
+                                WHEN TRY_CAST(kosten_rit AS DOUBLE) IS NOT NULL
+                                THEN COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0)
+                                ELSE 0
+                            END
+                        ) = 0 THEN NULL
+                        ELSE SUM(
+                            COALESCE(TRY_CAST(kosten_rit AS DOUBLE), 0)
+                            * CASE
+                                WHEN TRY_CAST(kosten_rit AS DOUBLE) IS NOT NULL
+                                THEN COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0)
+                                ELSE 0
+                              END
+                        ) / SUM(
+                            CASE
+                                WHEN TRY_CAST(kosten_rit AS DOUBLE) IS NOT NULL
+                                THEN COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0)
+                                ELSE 0
+                            END
+                        )
+                    END AS average_cost
+                FROM read_parquet('{kentallen_glob}')
+                WHERE 1=1 {filter_sql}
+                """
+            ).fetchone()
+
+            chart_rows = conn.execute(
+                f"""
+                SELECT
+                    CAST(datum AS DATE) AS datum,
+                    CASE
+                        WHEN SUM(
+                            CASE
+                                WHEN TRY_CAST(kosten_rit AS DOUBLE) IS NOT NULL
+                                THEN COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0)
+                                ELSE 0
+                            END
+                        ) = 0 THEN NULL
+                        ELSE SUM(
+                            COALESCE(TRY_CAST(kosten_rit AS DOUBLE), 0)
+                            * CASE
+                                WHEN TRY_CAST(kosten_rit AS DOUBLE) IS NOT NULL
+                                THEN COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0)
+                                ELSE 0
+                              END
+                        ) / SUM(
+                            CASE
+                                WHEN TRY_CAST(kosten_rit AS DOUBLE) IS NOT NULL
+                                THEN COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0)
+                                ELSE 0
+                            END
+                        )
+                    END AS kosten_rit
+                FROM read_parquet('{kentallen_glob}')
+                WHERE 1=1 {filter_sql}
+                GROUP BY 1
+                ORDER BY 1
+                """
+            ).fetchall()
+
+            table_rows = conn.execute(
+                f"""
+                SELECT
+                    CAST(datum AS DATE) AS datum,
+                    SUM(COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0)) AS n_ritten,
+                    CASE
+                        WHEN SUM(
+                            CASE
+                                WHEN TRY_CAST(kosten_rit AS DOUBLE) IS NOT NULL
+                                THEN COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0)
+                                ELSE 0
+                            END
+                        ) = 0 THEN NULL
+                        ELSE SUM(
+                            COALESCE(TRY_CAST(kosten_rit AS DOUBLE), 0)
+                            * CASE
+                                WHEN TRY_CAST(kosten_rit AS DOUBLE) IS NOT NULL
+                                THEN COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0)
+                                ELSE 0
+                              END
+                        ) / SUM(
+                            CASE
+                                WHEN TRY_CAST(kosten_rit AS DOUBLE) IS NOT NULL
+                                THEN COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0)
+                                ELSE 0
+                            END
+                        )
+                    END AS kosten_rit
+                FROM read_parquet('{kentallen_glob}')
+                WHERE 1=1 {filter_sql}
+                GROUP BY 1
+                ORDER BY 1
+                """
+            ).fetchall()
+
+            monthly_rows = conn.execute(
+                f"""
+                WITH anchor AS (
+                    SELECT COALESCE(
+                        MAX(CASE WHEN 1=1 {filter_sql} THEN CAST(datum AS DATE) END),
+                        MAX(CAST(datum AS DATE))
+                    ) AS max_date
+                    FROM read_parquet('{kentallen_glob}')
+                ),
+                filtered AS (
+                    SELECT
+                        DATE_TRUNC('month', datum)::DATE AS month_start,
+                        TRY_CAST(kosten_rit AS DOUBLE) AS kosten_rit,
+                        COALESCE(TRY_CAST(n_ritten AS DOUBLE), 0) AS n_ritten
+                    FROM read_parquet('{kentallen_glob}'), anchor
+                    WHERE anchor.max_date IS NOT NULL
+                      AND CAST(datum AS DATE) >= DATE_TRUNC('month', anchor.max_date) - INTERVAL 11 MONTH
+                      AND CAST(datum AS DATE) < DATE_TRUNC('month', anchor.max_date) + INTERVAL 1 MONTH
+                )
+                SELECT
+                    month_start,
+                    CASE
+                        WHEN SUM(
+                            CASE
+                                WHEN kosten_rit IS NOT NULL THEN n_ritten
+                                ELSE 0
+                            END
+                        ) = 0 THEN NULL
+                        ELSE SUM(
+                            COALESCE(kosten_rit, 0)
+                            * CASE
+                                WHEN kosten_rit IS NOT NULL THEN n_ritten
+                                ELSE 0
+                              END
+                        ) / SUM(
+                            CASE
+                                WHEN kosten_rit IS NOT NULL THEN n_ritten
+                                ELSE 0
+                            END
+                        )
+                    END AS weighted_cost
+                FROM filtered
+                GROUP BY 1
+                ORDER BY 1
+                """
+            ).fetchall()
+
+        total_checked = int(summary_row[0] or 0)
+        rows_with_cost = int(summary_row[1] or 0)
+        total_rides = int(summary_row[2] or 0)
+        average_cost = self._float_or_none(summary_row[3])
+        summary = {
+            "total_checked": total_checked,
+            "days_with_cost": rows_with_cost,
+            "coverage_percentage": round((100.0 * rows_with_cost / total_checked), 2) if total_checked else 0.0,
+            "average_cost": average_cost,
+            "total_rides": total_rides,
+        }
+        chart_points = [
+            {
+                "label": row[0].strftime("%d-%m-%Y") if row[0] is not None else "",
+                "value": self._float_or_none(row[1]),
+            }
+            for row in chart_rows
+            if row[0] is not None
+        ]
+        table_data = [
+            {
+                "datum": row[0].strftime("%d-%m-%Y") if row[0] is not None else "",
+                "n_ritten": int(row[1] or 0),
+                "kosten_rit": self._float_or_none(row[2]),
+            }
+            for row in table_rows
+        ]
+        monthly_chart_points = [
+            {
+                "label": row[0].strftime("%Y-%m") if row[0] is not None else "",
+                "value": self._float_or_none(row[1]),
+            }
+            for row in monthly_rows
+            if row[0] is not None
+        ]
+        return summary, chart_points, table_data, monthly_chart_points
+
     def get_generic_control_report(
         self,
         client_slug: str,
@@ -1439,6 +2119,18 @@ class DuckDBAnalyticsService:
                     ("gerealiseerde_uitstap", "GerealiseerdeUitstap"),
                     (text_column, "Routedetail"),
                 ]
+            elif control_id == 5:
+                header_map = [
+                    ("datum", "Datum"),
+                    ("route_nummer", "RouteNummer"),
+                    ("route_naam", "RouteNaam"),
+                    ("postcode_eerste", "Van"),
+                    ("postcode_via", "Via"),
+                    ("postcode_laatste", "Naar"),
+                    (text_column, "Foutmelding"),
+                    ("aantal_lopers", "Lopers"),
+                    ("aantal_rollers", "Rollers"),
+                ]
             elif control_id == 7:
                 header_map = [
                     ("datum", "Datum"),
@@ -1459,8 +2151,8 @@ class DuckDBAnalyticsService:
                     ("postcode_naar", "Postcode naar"),
                     ("bestelde_vertrektijd", "Besteld vertrek"),
                     ("bestelde_aankomsttijd", "Besteld aankomst"),
-                    ("geplande_instap_tijd", "Instap"),
-                    ("geplande_uitstap_tijd", "Uitstap"),
+                    ("gerealiseerde_instap_tijd", "Instap"),
+                    ("gerealiseerde_uitstap_tijd", "Uitstap"),
                     (text_column, "Tekst"),
                     (control_value_column, "Controlewaarde"),
                     (threshold_column, "Drempelwaarde"),
@@ -1494,27 +2186,70 @@ class DuckDBAnalyticsService:
                     ("postcode_laatste", "PostcodeLaatste"),
                     (control_value_column, "Minuten leeg"),
                 ]
-            elif control_id in {2, 16, 17, 19, 22}:
+            elif control_id == 18:
                 header_map = [
                     ("datum", "Datum"),
                     ("klant_nummer", "KlantNummer"),
                     ("reiziger_naam", "ReizigerNaam"),
                     ("route_nummer", "RouteNummer"),
                     ("locatie_van", "Locatie van"),
+                    ("straat_van", "Straat van"),
+                    ("huisnummer_van", "Huisnummer van"),
                     ("postcode_van", "Postcode van"),
+                    ("plaats_van", "Plaats van"),
                     ("locatie_naar", "Locatie naar"),
+                    ("straat_naar", "Straat naar"),
+                    ("huisnummer_naar", "Huisnummer naar"),
                     ("postcode_naar", "Postcode naar"),
+                    ("plaats_naar", "Plaats naar"),
+                    (text_column, "Omschrijving fout"),
+                ]
+            elif control_id == 22:
+                header_map = [
+                    ("datum", "Datum"),
+                    ("route_nummer", "Routenummer"),
+                    ("reiziger_naam", "Reizigersnaam"),
+                    ("gerealiseerde_instap_tijd", "Gerealiseerde instaptijd"),
+                    ("gerealiseerde_uitstap_tijd", "Gerealiseerde uitstaptijd"),
+                    ("kenteken", "Kenteken"),
+                    ("richting", "Richting"),
+                    ("route_naam", "Routenaam"),
+                    (text_column, "Medepassagiers"),
+                ]
+            elif control_id == 23:
+                header_map = [
+                    ("datum", "Datum"),
+                    ("klant_nummer", "Klantnummer"),
+                    ("reiziger_naam", "Reizigersnaam"),
+                    ("richting", "Richting"),
+                    ("status_rit", "StatusRit"),
+                    (text_column, "Tekst_23"),
+                ]
+            elif control_id in {2, 16, 17, 19}:
+                header_map = [
+                    ("datum", "Datum"),
+                    ("klant_nummer", "KlantNummer"),
+                    ("reiziger_naam", "ReizigerNaam"),
+                    ("route_nummer", "RouteNummer"),
+                    ("locatie_van", "Locatie van"),
+                    ("locatie_naar", "Locatie naar"),
                     ("bestelde_vertrektijd", "Besteld vertrek"),
                     ("bestelde_aankomsttijd", "Besteld aankomst"),
-                    ("geplande_instap_tijd", "Instap"),
-                    ("geplande_uitstap_tijd", "Uitstap"),
-                    ("netto_instap", "Netto instap"),
-                    ("netto_uitstap", "Netto uitstap"),
-                    ("vervoerder", "Vervoerder"),
                     (text_column, "Tekst"),
                     (control_value_column, "Controlewaarde"),
                     (threshold_column, "Drempelwaarde"),
                 ]
+                if control_id != 2:
+                    header_map.insert(5, ("postcode_van", "Postcode van"))
+                    header_map.insert(7, ("postcode_naar", "Postcode naar"))
+                    header_map.insert(10, ("geplande_instap_tijd", "Instap"))
+                    header_map.insert(11, ("geplande_uitstap_tijd", "Uitstap"))
+                    header_map.insert(12, ("netto_instap", "Netto instap"))
+                    header_map.insert(13, ("netto_uitstap", "Netto uitstap"))
+                    header_map.insert(14, ("vervoerder", "Vervoerder"))
+                else:
+                    header_map.insert(8, ("gerealiseerde_instap_tijd", "Gerealiseerde instap"))
+                    header_map.insert(9, ("gerealiseerde_uitstap_tijd", "Gerealiseerde uitstap"))
             elif control_id == 1001:
                 header_map = [
                     ("rit_datum", "RitDatum"),

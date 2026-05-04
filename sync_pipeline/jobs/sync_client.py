@@ -17,6 +17,7 @@ from sync_pipeline.sqlserver.extractor import (
     extract_controls,
     extract_current_runs,
     extract_current_runs_frame,
+    extract_kentallen_route,
     extract_ritten_detail,
     extract_routes_detail,
     extract_va_ritten_detail,
@@ -124,6 +125,18 @@ def _prepare_routes_detail(
     if "stuurtabel_id" in normalized.columns and current_ids:
         normalized = normalized[normalized["stuurtabel_id"].isin(current_ids)]
     return _coerce_types(normalized, datetime_columns=["datum", "synced_at"], numeric_columns=["stuurtabel_id", "id", "bedrag_ex_btw"])
+
+
+def _prepare_kentallen_route(
+    dataframe: pd.DataFrame,
+    client_slug: str,
+    current_ids: list[int],
+    sync_timestamp: datetime,
+) -> pd.DataFrame:
+    normalized = _add_metadata_columns(dataframe, client_slug, sync_timestamp)
+    if "stuurtabel_id" in normalized.columns and current_ids:
+        normalized = normalized[normalized["stuurtabel_id"].isin(current_ids)]
+    return _coerce_types(normalized, datetime_columns=["datum", "synced_at"], numeric_columns=["stuurtabel_id", "id", "route_id"])
 
 
 def _prepare_va_ritten_detail(
@@ -343,9 +356,40 @@ def run_client_sync(client: Client, progress_callback: ProgressCallback | None =
         rg_new_ids, va_new_ids = _split_run_ids_by_transport(current_runs_frame, new_ids)
 
         report_progress("extracting_new_data", "Extracting new run data from SQL Server", 55)
+
+        report_progress(
+            "extracting_ritten_detail",
+            f"Extracting ritten_detail for {len(rg_new_ids)} RG runs",
+            56,
+        )
         ritten_raw = extract_ritten_detail(connection, rg_new_ids, client.data_source_config, discovered_tables)
+
+        report_progress(
+            "extracting_routes_detail",
+            f"Extracting routes_detail for {len(rg_new_ids)} RG runs",
+            58,
+        )
         routes_raw = extract_routes_detail(connection, rg_new_ids, client.data_source_config, discovered_tables)
+
+        report_progress(
+            "extracting_kentallen_route",
+            f"Extracting kentallen_route for {len(rg_new_ids)} RG runs",
+            59,
+        )
+        kentallen_route_raw = extract_kentallen_route(connection, rg_new_ids, client.data_source_config, discovered_tables)
+
+        report_progress(
+            "extracting_va_ritten_detail",
+            f"Extracting va_ritten_detail for {len(va_new_ids)} VA runs",
+            60,
+        )
         va_ritten_raw = extract_va_ritten_detail(connection, va_new_ids, client.data_source_config, discovered_tables)
+
+        report_progress(
+            "extracting_controls",
+            f"Extracting executed controls for {len(new_ids)} runs",
+            62,
+        )
         controls_raw = extract_controls(connection, new_ids, client.data_source_config, discovered_tables)
 
     run_descriptions: dict[int, str | None] = {}
@@ -379,6 +423,7 @@ def run_client_sync(client: Client, progress_callback: ProgressCallback | None =
             "raw_source_columns": {
                 "ritten_detail": [],
                 "routes_detail": [],
+                "kentallen_route": [],
                 "va_ritten_detail": [],
                 "executed_controls": [],
             },
@@ -389,6 +434,7 @@ def run_client_sync(client: Client, progress_callback: ProgressCallback | None =
     report_progress("preparing_datasets", "Preparing new datasets for local merge", 65)
     ritten_detail_new = _prepare_ritten_detail(ritten_raw, client.slug, new_ids, sync_timestamp)
     routes_detail_new = _prepare_routes_detail(routes_raw, client.slug, new_ids, sync_timestamp)
+    kentallen_route_new = _prepare_kentallen_route(kentallen_route_raw, client.slug, new_ids, sync_timestamp)
     va_ritten_detail_new = _prepare_va_ritten_detail(va_ritten_raw, client.slug, new_ids, sync_timestamp)
     executed_controls_new = _prepare_executed_controls(controls_raw, client.slug, new_ids, sync_timestamp)
     ritten_controls_long_new = _expand_control_results(ritten_detail_new, "rit", "id", "datum")
@@ -398,6 +444,7 @@ def run_client_sync(client: Client, progress_callback: ProgressCallback | None =
     current_dataset_names = [
         "ritten_detail",
         "routes_detail",
+        "kentallen_route",
         "va_ritten_detail",
         "executed_controls",
         "ritten_controls_long",
@@ -411,6 +458,7 @@ def run_client_sync(client: Client, progress_callback: ProgressCallback | None =
     expired_frames = {
         "ritten_detail": _filter_frame_by_run_ids(existing_current["ritten_detail"], expired_ids),
         "routes_detail": _filter_frame_by_run_ids(existing_current["routes_detail"], expired_ids),
+        "kentallen_route": _filter_frame_by_run_ids(existing_current["kentallen_route"], expired_ids),
         "va_ritten_detail": _filter_frame_by_run_ids(existing_current["va_ritten_detail"], expired_ids),
         "executed_controls": _filter_frame_by_run_ids(existing_current["executed_controls"], expired_ids),
         "ritten_controls_long": _filter_frame_by_run_ids(existing_current["ritten_controls_long"], expired_ids),
@@ -421,6 +469,7 @@ def run_client_sync(client: Client, progress_callback: ProgressCallback | None =
     history_counts = {
         "ritten_detail": append_history_dataset(expired_frames["ritten_detail"], client.slug, "ritten_detail", sync_timestamp),
         "routes_detail": append_history_dataset(expired_frames["routes_detail"], client.slug, "routes_detail", sync_timestamp),
+        "kentallen_route": append_history_dataset(expired_frames["kentallen_route"], client.slug, "kentallen_route", sync_timestamp),
         "va_ritten_detail": append_history_dataset(expired_frames["va_ritten_detail"], client.slug, "va_ritten_detail", sync_timestamp),
         "executed_controls": append_history_dataset(expired_frames["executed_controls"], client.slug, "executed_controls", sync_timestamp),
         "ritten_controls_long": append_history_dataset(expired_frames["ritten_controls_long"], client.slug, "ritten_controls_long", sync_timestamp),
@@ -431,6 +480,7 @@ def run_client_sync(client: Client, progress_callback: ProgressCallback | None =
     report_progress("merging_current", "Merging new runs into local current datasets", 88)
     ritten_detail = _merge_current_dataset(existing_current["ritten_detail"], ritten_detail_new, retained_ids)
     routes_detail = _merge_current_dataset(existing_current["routes_detail"], routes_detail_new, retained_ids)
+    kentallen_route = _merge_current_dataset(existing_current["kentallen_route"], kentallen_route_new, retained_ids)
     va_ritten_detail = _merge_current_dataset(existing_current["va_ritten_detail"], va_ritten_detail_new, retained_ids)
     executed_controls = _merge_current_dataset(existing_current["executed_controls"], executed_controls_new, retained_ids)
     ritten_controls_long = _merge_current_dataset(existing_current["ritten_controls_long"], ritten_controls_long_new, retained_ids)
@@ -441,6 +491,7 @@ def run_client_sync(client: Client, progress_callback: ProgressCallback | None =
     current_counts = {
         "ritten_detail": write_current_dataset(ritten_detail, client.slug, "ritten_detail"),
         "routes_detail": write_current_dataset(routes_detail, client.slug, "routes_detail"),
+        "kentallen_route": write_current_dataset(kentallen_route, client.slug, "kentallen_route"),
         "va_ritten_detail": write_current_dataset(va_ritten_detail, client.slug, "va_ritten_detail"),
         "executed_controls": write_current_dataset(executed_controls, client.slug, "executed_controls"),
         "ritten_controls_long": write_current_dataset(ritten_controls_long, client.slug, "ritten_controls_long"),
@@ -470,6 +521,7 @@ def run_client_sync(client: Client, progress_callback: ProgressCallback | None =
         "raw_source_columns": {
             "ritten_detail": _raw_frame_columns(ritten_raw),
             "routes_detail": _raw_frame_columns(routes_raw),
+            "kentallen_route": _raw_frame_columns(kentallen_route_raw),
             "va_ritten_detail": _raw_frame_columns(va_ritten_raw),
             "executed_controls": _raw_frame_columns(controls_raw),
         },
@@ -477,6 +529,7 @@ def run_client_sync(client: Client, progress_callback: ProgressCallback | None =
     records_synced = (
         len(ritten_detail_new.index)
         + len(routes_detail_new.index)
+        + len(kentallen_route_new.index)
         + len(va_ritten_detail_new.index)
         + len(executed_controls_new.index)
         + len(ritten_controls_long_new.index)

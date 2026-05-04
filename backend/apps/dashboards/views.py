@@ -2,6 +2,7 @@ from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import redirect
+from django.urls import reverse
 from django.views import View
 from django.views.generic import TemplateView
 from urllib.parse import urlencode
@@ -111,6 +112,44 @@ class ClientContextMixin(LoginRequiredMixin):
         if hours:
             return f"{hours}u {remainder:02d}m"
         return f"{remainder} min"
+
+    def get_executed_control_description(self, executed_controls, control_id: int) -> str | None:
+        for control in executed_controls:
+            if control.control_id is None or int(control.control_id) != int(control_id):
+                continue
+            if " - " in control.label:
+                return control.label.split(" - ", 1)[1].strip()
+            return control.label.strip()
+        return None
+
+    def apply_control_content(
+        self,
+        context,
+        analytics: DuckDBAnalyticsService,
+        control_id: int,
+        soortvervoer: str | None,
+        executed_control_description: str | None,
+        default_title: str,
+        default_explanation: str,
+    ):
+        content = analytics.get_control_content(control_id, soortvervoer)
+        context["control_title"] = (
+            content.title_override
+            if content and content.title_override
+            else default_title
+        )
+        context["control_explanation"] = (
+            content.explanation
+            if content and content.explanation
+            else content.short_description
+            if content and content.short_description
+            else executed_control_description
+            if executed_control_description
+            else default_explanation
+        )
+        context["control_short_description"] = content.short_description if content and content.short_description else executed_control_description
+        context["control_content"] = content
+        return context
 
     def _excel_column_name(self, index: int) -> str:
         name = ""
@@ -428,7 +467,7 @@ class ClientDashboardView(ClientContextMixin, TemplateView):
         context["control_breakdown"] = analytics.get_control_breakdown(client.slug, selected_run_id)
         context["executed_controls"] = analytics.get_executed_controls(client.slug, selected_run_id)
         context["can_refresh_client"] = self.can_refresh_client(client)
-        latest_sync = client.sync_runs.first()
+        latest_sync = self.get_sync_orchestrator().get_latest_sync(client)
         context["latest_sync"] = latest_sync
         context["latest_sync_payload"] = self.serialize_sync_run(latest_sync)
         return context
@@ -455,7 +494,7 @@ class ClientRefreshView(ClientContextMixin, View):
 class ClientRefreshStatusView(ClientContextMixin, View):
     def get(self, request, *args, **kwargs):
         client = self.get_client()
-        latest_sync = client.sync_runs.first()
+        latest_sync = self.get_sync_orchestrator().get_latest_sync(client)
         return JsonResponse({"sync_run": self.serialize_sync_run(latest_sync)})
 
 
@@ -630,6 +669,24 @@ class ControlReportView(ClientContextMixin, TemplateView):
                 "Perceelvervoerder",
             ]
             return self._respond_export(f"{client.slug}-control-1-{selected_run_id}", headers, rows, "Control 1")
+        if control_id == 5:
+            _summary, rows, _total_rows = analytics.get_control_5_report(client.slug, selected_run_id, 1_000_000, 0)
+            headers = ["Datum", "RouteNummer", "RouteNaam", "Van", "Via", "Naar", "Foutmelding", "Lopers", "Rollers"]
+            export_rows = [
+                (
+                    row["route_date_label"],
+                    row["route_nummer"],
+                    row["route_naam"],
+                    row["van"],
+                    row["via"],
+                    row["naar"],
+                    row["foutmelding"],
+                    row["lopers"],
+                    row["rollers"],
+                )
+                for row in rows
+            ]
+            return self._respond_export(f"{client.slug}-control-5-{selected_run_id}", headers, export_rows, "Control 5")
         if control_id == 8:
             _summary, rows, total_rows = analytics.get_control_8_report(client.slug, selected_run_id, 1_000_000, 0)
             headers = [
@@ -709,6 +766,62 @@ class ControlReportView(ClientContextMixin, TemplateView):
                 for row in vehicle_rows
             ]
             return self._respond_export(f"{client.slug}-control-11-vehicles-{selected_run_id}", headers, rows, "Control 11 Vehicles")
+        if control_id == 12:
+            _summary, _classified_rides, fuel_types, daily_rows, monthly_rows = analytics.get_control_12_report(
+                client.slug,
+                selected_run_id,
+            )
+            if table_name == "months":
+                headers = ["Maand"]
+                for fuel_type in fuel_types:
+                    headers.extend([f"{fuel_type} aantal", f"{fuel_type} %"])
+                headers.append("Totaal")
+                rows = []
+                for row in monthly_rows:
+                    export_row = [row["label"]]
+                    for cell in row["cells"]:
+                        export_row.extend([cell["rides"], cell["percentage"]])
+                    export_row.append(row["total"])
+                    rows.append(tuple(export_row))
+                return self._respond_export(f"{client.slug}-control-12-months-{selected_run_id}", headers, rows, "Control 12 Months")
+
+            headers = ["Datum"]
+            for fuel_type in fuel_types:
+                headers.extend([f"{fuel_type} aantal", f"{fuel_type} %"])
+            headers.append("Totaal")
+            rows = []
+            for row in daily_rows:
+                export_row = [row["label"]]
+                for cell in row["cells"]:
+                    export_row.extend([cell["rides"], cell["percentage"]])
+                export_row.append(row["total"])
+                rows.append(tuple(export_row))
+            return self._respond_export(f"{client.slug}-control-12-{selected_run_id}", headers, rows, "Control 12")
+        if control_id == 13:
+            _summary, report_rows, totals, _age_distribution = analytics.get_control_13_report(client.slug, selected_run_id)
+            headers = ["Kenteken", "Inzetdagen", "Vervoerde passagiers", "Drempelwaarde", "Controlewaarde", "Type", "inrichting"]
+            rows = [
+                (
+                    row["kenteken"],
+                    row["inzetdagen"],
+                    row["vervoerde_passagiers"],
+                    row["drempelwaarde"],
+                    row["controlewaarde"],
+                    row["type"],
+                    row["inrichting"],
+                )
+                for row in report_rows
+            ]
+            rows.append(("Totaal", totals["inzetdagen"], totals["passagiers"], "", "", "", ""))
+            return self._respond_export(f"{client.slug}-control-13-{selected_run_id}", headers, rows, "Control 13")
+        if control_id == 20:
+            _summary, _chart_points, table_rows, _monthly_chart_points = analytics.get_control_20_report(client.slug, selected_run_id)
+            headers = ["Datum", "Aantal ritten", "Gewogen kosten per rit"]
+            rows = [
+                (row["datum"], row["n_ritten"], row["kosten_rit"])
+                for row in table_rows
+            ]
+            return self._respond_export(f"{client.slug}-control-20-{selected_run_id}", headers, rows, "Control 20")
         if control_id == 1004:
             _summary, emission_classes, weekly_rows, trip_rows, distance_rows = analytics.get_control_1004_report(
                 client.slug,
@@ -741,7 +854,7 @@ class ControlReportView(ClientContextMixin, TemplateView):
             headers = ["Weeknummer", *fuel_types, "Totaal"]
             rows = [(row["label"], *row["values"], row["total"]) for row in weekly_rows]
             return self._respond_export(f"{client.slug}-control-1005-weeks-{selected_run_id}", headers, rows, "Control 1005 Weeks")
-        if control_id in {2, 3, 7, 9, 12, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1006, 1007, 1008}:
+        if control_id in {2, 3, 7, 9, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1006, 1007, 1008}:
             _summary, headers, rows, _total_rows = analytics.get_generic_control_report(
                 client.slug,
                 selected_run_id,
@@ -758,6 +871,12 @@ class ControlReportView(ClientContextMixin, TemplateView):
             return ["dashboards/control_10_report.html"]
         if int(self.kwargs["control_id"]) == 11:
             return ["dashboards/control_11_report.html"]
+        if int(self.kwargs["control_id"]) == 12:
+            return ["dashboards/control_12_report.html"]
+        if int(self.kwargs["control_id"]) == 13:
+            return ["dashboards/control_13_report.html"]
+        if int(self.kwargs["control_id"]) == 20:
+            return ["dashboards/control_20_report.html"]
         if int(self.kwargs["control_id"]) == 1004:
             return ["dashboards/control_1004_report.html"]
         if int(self.kwargs["control_id"]) == 1005:
@@ -771,6 +890,8 @@ class ControlReportView(ClientContextMixin, TemplateView):
         available_run_ids = self.get_available_run_ids(client)
         selected_run_id = self.get_selected_run_id(available_run_ids)
         control_id = int(self.kwargs["control_id"])
+        selected_run = analytics.get_run_option(client.slug, selected_run_id) if selected_run_id is not None else None
+        selected_soortvervoer = selected_run.soortvervoer if selected_run else None
         page_size = self.page_size
         offset = self.get_offset()
         context["client"] = client
@@ -778,9 +899,10 @@ class ControlReportView(ClientContextMixin, TemplateView):
         context["selected_run_id"] = selected_run_id
         context["control_id"] = control_id
         definition = analytics.get_control_definition(control_id)
-        context["implemented"] = control_id in {1, 8, 10, 11, 1004, 1005} or control_id in {2, 3, 7, 9, 12, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1006, 1007, 1008}
+        context["implemented"] = control_id in {1, 4, 8, 10, 11, 12, 13, 20, 1004, 1005} or control_id in {2, 3, 5, 7, 9, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1006, 1007, 1008}
         executed_controls = [control for control in analytics.get_executed_controls(client.slug, selected_run_id) if control.control_id is not None]
         executed_control_ids = [int(control.control_id) for control in executed_controls]
+        executed_control_description = self.get_executed_control_description(executed_controls, control_id)
         if control_id in executed_control_ids:
             current_index = executed_control_ids.index(control_id)
             context["previous_control_id"] = executed_control_ids[current_index - 1] if current_index > 0 else None
@@ -801,19 +923,60 @@ class ControlReportView(ClientContextMixin, TemplateView):
             summary, rows, total_rows = analytics.get_control_1_report(client.slug, selected_run_id, page_size, offset)
             context["summary"] = summary
             context["rows"] = rows
-            context["control_title"] = "Controle 1 - Bestelling ook in SW?"
-            context["control_explanation"] = (
-                "Controle of er van een rit op de factuur ook een bestelling is in de schema's of losse ritten in SmartWheels."
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                "Controle 1 - Bestelling ook in SW?",
+                "Controle of er van een rit op de factuur ook een bestelling is in de schema's of losse ritten in SmartWheels.",
             )
             context["template_variant"] = "control_1"
+            self.add_pagination_context(context, total_rows)
+        elif control_id == 4:
+            context["summary"] = None
+            context["rows"] = []
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                definition["title"],
+                "Dit is een interne controle om de individuele reistijden te bepalen. Deze controle geeft geen output.",
+            )
+            context["template_variant"] = "description_only"
+        elif control_id == 5:
+            summary, rows, total_rows = analytics.get_control_5_report(client.slug, selected_run_id, page_size, offset)
+            context["summary"] = summary
+            context["rows"] = rows
+            context["control_entity_label"] = "routes"
+            context["control_metric_label"] = definition["metric_label"]
+            context["control5_route_detail_url"] = reverse("control_5_route_detail", kwargs={"slug": client.slug})
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                definition["title"],
+                "Controle 5 detailweergave van routes waarbij de planning niet kon worden gemaakt.",
+            )
+            context["template_variant"] = "control_5"
             self.add_pagination_context(context, total_rows)
         elif control_id == 8:
             summary, rows, total_rows = analytics.get_control_8_report(client.slug, selected_run_id, page_size, offset)
             context["summary"] = summary
             context["rows"] = rows
-            context["control_title"] = "Controle 8 - Overschrijden reistijd"
-            context["control_explanation"] = (
-                "Controle op ritten waarbij de geplande reistijd de toegestane maximale reistijd overschrijdt."
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                "Controle 8 - Overschrijden reistijd",
+                "Controle op ritten waarbij de geplande reistijd de toegestane maximale reistijd overschrijdt.",
             )
             context["template_variant"] = "control_8"
             self.add_pagination_context(context, total_rows)
@@ -834,9 +997,14 @@ class ControlReportView(ClientContextMixin, TemplateView):
             context["route_detail_rows"] = route_detail_rows
             context["actual_duration_label"] = self.format_minutes_label(actual_duration_minutes)
             context["replanned_duration_label"] = self.format_minutes_label(replanned_duration_minutes)
-            context["control_title"] = "Controle 10 - Routekaart (optimalisatie)"
-            context["control_explanation"] = (
-                "Vergelijk de werkelijke stopvolgorde met de herplande volgorde op basis van netto instap- en uitstaptijden."
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                "Controle 10 - Routekaart (optimalisatie)",
+                "Vergelijk de werkelijke stopvolgorde met de herplande volgorde op basis van netto instap- en uitstaptijden.",
             )
             context["template_variant"] = "control_10"
             self.add_pagination_context(context, total_rows)
@@ -852,13 +1020,72 @@ class ControlReportView(ClientContextMixin, TemplateView):
             context["class_rows"] = class_rows
             context["vehicle_rows"] = vehicle_rows
             context["kilometer_available"] = kilometer_available
-            context["control_title"] = "Controle 11 - Emissieklasse voertuigen"
-            context["control_explanation"] = (
-                "Per voertuig wordt via RDW de emissieklasse bepaald. Deze pagina toont de inzet van voertuigen per emissieklasse "
-                "en, indien beschikbaar in de routegegevens, ook het aandeel kilometers per klasse."
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                "Controle 11 - Emissieklasse voertuigen",
+                "Per voertuig wordt via RDW de emissieklasse bepaald. Deze pagina toont de inzet van voertuigen per emissieklasse en, indien beschikbaar in de routegegevens, ook het aandeel kilometers per klasse.",
             )
             context["template_variant"] = "control_11"
             self.add_pagination_context(context, total_rows)
+        elif control_id == 12:
+            summary, classified_rides, fuel_types, daily_rows, monthly_rows = analytics.get_control_12_report(
+                client.slug,
+                selected_run_id,
+            )
+            context["summary"] = summary
+            context["classified_rides"] = classified_rides
+            context["fuel_types"] = fuel_types
+            context["daily_rows"] = daily_rows
+            context["monthly_rows"] = monthly_rows
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                "Controle 12 - Brandstofsoort",
+                "Overzicht per dag van het aantal en percentage van de gebruikte brandstofsoorten.",
+            )
+            context["template_variant"] = "control_12"
+        elif control_id == 13:
+            summary, report_rows, totals, age_distribution = analytics.get_control_13_report(client.slug, selected_run_id)
+            context["summary"] = summary
+            context["report_rows"] = report_rows
+            context["totals"] = totals
+            context["age_chart_labels"] = [row["label"] for row in age_distribution]
+            context["age_chart_values"] = [row["value"] for row in age_distribution]
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                "Controle 13",
+                "Overzicht per kenteken van inzetdagen, vervoerde passagiers en de controlewaarden voor deze controle.",
+            )
+            context["template_variant"] = "control_13"
+        elif control_id == 20:
+            summary, chart_points, table_rows, monthly_chart_points = analytics.get_control_20_report(client.slug, selected_run_id)
+            context["summary"] = summary
+            context["table_rows"] = table_rows
+            context["cost_chart_labels"] = [point["label"] for point in chart_points]
+            context["cost_chart_values"] = [point["value"] for point in chart_points]
+            context["monthly_cost_chart_labels"] = [point["label"] for point in monthly_chart_points]
+            context["monthly_cost_chart_values"] = [point["value"] for point in monthly_chart_points]
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                "Controle 20 - Kosten per rit",
+                "Overzicht van de kosten per rit op basis van kentallen_route, geplot per datum.",
+            )
+            context["template_variant"] = "control_20"
         elif control_id == 1004:
             summary, emission_classes, weekly_rows, trip_rows, distance_rows = analytics.get_control_1004_report(
                 client.slug,
@@ -869,9 +1096,14 @@ class ControlReportView(ClientContextMixin, TemplateView):
             context["weekly_rows"] = weekly_rows
             context["trip_rows"] = trip_rows
             context["distance_rows"] = distance_rows
-            context["control_title"] = "Controle 1004 - Emissieklasse voertuigen VA ritten"
-            context["control_explanation"] = (
-                "Overzicht van VA-voertuiginzet per emissieniveau, uitgesplitst naar ISO-week, aantal ritten en som van afstand_direct."
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                "Controle 1004 - Emissieklasse voertuigen VA ritten",
+                "Overzicht van VA-voertuiginzet per emissieniveau, uitgesplitst naar ISO-week, aantal ritten en som van afstand_direct.",
             )
             context["template_variant"] = "control_1004"
         elif control_id == 1005:
@@ -884,12 +1116,17 @@ class ControlReportView(ClientContextMixin, TemplateView):
             context["weekly_rows"] = weekly_rows
             context["trip_rows"] = trip_rows
             context["distance_rows"] = distance_rows
-            context["control_title"] = "Controle 1005 - Brandstof voertuigen VA ritten"
-            context["control_explanation"] = (
-                "Overzicht van VA-voertuiginzet per brandstofsoort, uitgesplitst naar ISO-week, aantal ritten en afgelegde reizigers kilometers."
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                "Controle 1005 - Brandstof voertuigen VA ritten",
+                "Overzicht van VA-voertuiginzet per brandstofsoort, uitgesplitst naar ISO-week, aantal ritten en afgelegde reizigers kilometers.",
             )
             context["template_variant"] = "control_1005"
-        elif control_id in {2, 3, 7, 9, 12, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1006, 1007, 1008}:
+        elif control_id in {2, 3, 5, 7, 9, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1006, 1007, 1008}:
             summary, headers, rows, total_rows = analytics.get_generic_control_report(
                 client.slug,
                 selected_run_id,
@@ -900,19 +1137,67 @@ class ControlReportView(ClientContextMixin, TemplateView):
             context["summary"] = summary
             context["generic_headers"] = headers
             context["rows"] = rows
-            context["control_title"] = definition["title"]
             context["control_entity_label"] = "routes" if definition["entity"] == "route" else "ritten"
             context["control_metric_label"] = definition["metric_label"]
-            context["control_explanation"] = (
-                "Eerste versie van deze controlepagina op basis van het huidige Parquet-model en de Power BI layout. "
-                "Businesslogica en kolomkeuze worden later per controle verder aangescherpt."
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                definition["title"],
+                "Eerste versie van deze controlepagina op basis van het huidige Parquet-model en de Power BI layout. Businesslogica en kolomkeuze worden later per controle verder aangescherpt.",
             )
             context["template_variant"] = "generic"
             self.add_pagination_context(context, total_rows)
         else:
             context["summary"] = None
             context["rows"] = []
-            context["control_title"] = f"Controle {control_id}"
-            context["control_explanation"] = "Voor deze controle is de detailpagina nog niet uitgewerkt."
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                f"Controle {control_id}",
+                "Voor deze controle is de detailpagina nog niet uitgewerkt.",
+            )
             context["template_variant"] = "placeholder"
         return context
+
+
+class Control5RouteDetailView(ClientContextMixin, View):
+    def get(self, request, *args, **kwargs):
+        client = self.get_client()
+        analytics = self.analytics_service()
+        available_run_ids = self.get_available_run_ids(client)
+        selected_run_id = self.get_selected_run_id(available_run_ids)
+        route_nummer = request.GET.get("route_nummer", "").strip()
+        route_date = request.GET.get("route_date", "").strip()
+        if not route_nummer or not route_date:
+            return JsonResponse({"error": "route_nummer and route_date are required"}, status=400)
+
+        rows = analytics.get_control_5_route_detail(client.slug, selected_run_id, route_nummer, route_date)
+        headers = [
+            "Datum",
+            "RouteNummer",
+            "Bestelde Aankomst",
+            "Bestelde Vertrek",
+            "KlantNummer",
+            "ReizigerNaam",
+            "Locatie van",
+            "plaats_van",
+            "Locatie naar",
+            "plaats_naar",
+            "Plan Instap",
+            "Plan Uitstap",
+            "AfwezigheidsMelding",
+        ]
+        return JsonResponse(
+            {
+                "headers": headers,
+                "rows": rows,
+                "route_nummer": route_nummer,
+                "route_date": route_date,
+            }
+        )

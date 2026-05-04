@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}{{ client.name }} {{ control_title }}{% endblock %}
+{% block main_class %}container-fluid px-4 px-xl-5{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+    <div>
+        <p class="eyebrow mb-2">Control Report</p>
+        <h1 class="display-6 mb-1">{{ control_title }}</h1>
+        <p class="text-light-emphasis mb-0">{{ client.name }}</p>
+    </div>
+    <div class="d-flex gap-2 align-items-end flex-wrap">
+        <form method="get" class="d-flex gap-2 align-items-end">
+            <div>
+                <label for="stuurtabel_id" class="form-label small text-light-emphasis mb-1">Stuurtabel ID</label>
+                <select id="stuurtabel_id" name="stuurtabel_id" class="form-select" onchange="this.form.submit()">
+                    {% for run in available_run_ids %}
+                        <option value="{{ run.stuurtabel_id }}" {% if run.stuurtabel_id == selected_run_id %}selected{% endif %}>{{ run.stuurtabel_id }}{% if run.soortvervoer %} [{{ run.soortvervoer }}]{% endif %}{% if run.omschrijving %} - {{ run.omschrijving }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </form>
+        {% include "dashboards/includes/control_nav_buttons.html" %}
+        <a href="{% url 'client_dashboard' client.slug %}?stuurtabel_id={{ selected_run_id }}" class="btn btn-outline-light">Back to dashboard</a>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="metric-card h-100">
+            <span>Aantal geteste ritten</span>
+            <strong>{{ summary.total_checked }}</strong>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="metric-card h-100">
+            <span>Voertuigen in overzicht</span>
+            <strong>{{ summary.vehicles }}</strong>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="metric-card h-100">
+            <span>Gemiddelde leeftijd</span>
+            <strong>{% if summary.average_age is not None %}{{ summary.average_age|floatformat:1 }}{% else %}-{% endif %}</strong>
+            <small class="d-block mt-2 text-white">Dekking {{ summary.coverage_percentage }}%</small>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="panel h-100">
+            <p class="eyebrow mb-2">Uitleg controle</p>
+            <p class="mb-0 text-light-emphasis">{{ control_explanation }}</p>
+        </div>
+    </div>
+</div>
+
+{% if age_chart_labels %}
+<div class="panel p-4 mb-4">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+        <div>
+            <p class="eyebrow mb-2">Leeftijd voertuigen</p>
+            <h2 class="h5 mb-0">Leeftijdsverdeling voertuigen</h2>
+        </div>
+    </div>
+    <div style="height: 360px;">
+        <canvas id="control13AgeChart"></canvas>
+    </div>
+</div>
+{{ age_chart_labels|json_script:"control13-age-labels" }}
+{{ age_chart_values|json_script:"control13-age-values" }}
+{% endif %}
+
+<div class="panel p-4">
+    <div class="d-flex justify-content-end mb-3">
+        <a class="btn btn-outline-light btn-sm" href="?stuurtabel_id={{ selected_run_id }}&export=csv">Export CSV</a>
+        <a class="btn btn-outline-light btn-sm ms-2" href="?stuurtabel_id={{ selected_run_id }}&export=xlsx">Export XLSX</a>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped align-middle mb-0 report-table">
+            <thead>
+                <tr>
+                    <th>Kenteken</th>
+                    <th>Inzetdagen</th>
+                    <th>Vervoerde passagiers</th>
+                    <th>Drempelwaarde</th>
+                    <th>Controlewaarde</th>
+                    <th>Type</th>
+                    <th>inrichting</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in report_rows %}
+                    <tr>
+                        <td>{{ row.kenteken }}</td>
+                        <td>{{ row.inzetdagen }}</td>
+                        <td>{{ row.vervoerde_passagiers }}</td>
+                        <td>{{ row.drempelwaarde|default_if_none:"" }}</td>
+                        <td>{{ row.controlewaarde|default_if_none:"" }}</td>
+                        <td>{{ row.type }}</td>
+                        <td>{{ row.inrichting }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center text-light-emphasis">Geen gegevens gevonden voor deze controle.</td>
+                    </tr>
+                {% endfor %}
+                {% if report_rows %}
+                    <tr class="fw-semibold">
+                        <td>Totaal</td>
+                        <td>{{ totals.inzetdagen }}</td>
+                        <td>{{ totals.passagiers }}</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 from django.conf import settings
 
@@ -30,7 +31,10 @@ def read_current_dataset(client_slug: str, dataset: str) -> pd.DataFrame:
     parquet_files = sorted(target_dir.glob("*.parquet"))
     if not parquet_files:
         return pd.DataFrame()
-    return pd.read_parquet([str(path) for path in parquet_files])
+    file_list = ", ".join(f"'{str(path)}'" for path in parquet_files)
+    query = f"SELECT * FROM read_parquet([{file_list}], hive_partitioning=false, union_by_name=true)"
+    with duckdb.connect(":memory:") as conn:
+        return conn.execute(query).fetchdf()
 
 
 def _replace_directory_atomic(source_dir: Path, target_dir: Path) -> None:

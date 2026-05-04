@@ -130,6 +130,104 @@ const initReportTableSorting = () => {
 const initDashboardPage = () => {
   initReportTableSorting();
 
+  const initControl5RouteModal = () => {
+    const modal = document.getElementById("control5RouteModal");
+    if (!modal) {
+      return;
+    }
+
+    const titleNode = document.getElementById("control5ModalTitle");
+    const subtitleNode = document.getElementById("control5ModalSubtitle");
+    const loadingNode = document.getElementById("control5ModalLoading");
+    const errorNode = document.getElementById("control5ModalError");
+    const headNode = document.getElementById("control5ModalHead");
+    const bodyNode = document.getElementById("control5ModalBody");
+
+    const closeModal = () => {
+      modal.classList.add("d-none");
+      modal.setAttribute("aria-hidden", "true");
+    };
+
+    const openModal = () => {
+      modal.classList.remove("d-none");
+      modal.setAttribute("aria-hidden", "false");
+    };
+
+    modal.querySelectorAll("[data-close-control5-modal]").forEach((node) => {
+      node.addEventListener("click", closeModal);
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.classList.contains("d-none")) {
+        closeModal();
+      }
+    });
+
+    document.querySelectorAll(".control-5-route-row").forEach((row) => {
+      row.style.cursor = "pointer";
+      row.addEventListener("click", async () => {
+        const detailUrl = row.dataset.detailUrl;
+        const routeNummer = row.dataset.routeNummer || "";
+        const routeDate = row.dataset.routeDate || "";
+        if (!detailUrl) {
+          return;
+        }
+
+        openModal();
+        if (titleNode) titleNode.textContent = `Route ${routeNummer}`;
+        if (subtitleNode) subtitleNode.textContent = routeDate;
+        if (loadingNode) {
+          loadingNode.textContent = "Ritdetails laden...";
+          loadingNode.classList.remove("d-none");
+        }
+        if (errorNode) {
+          errorNode.textContent = "";
+          errorNode.classList.add("d-none");
+        }
+        if (headNode) headNode.innerHTML = "";
+        if (bodyNode) bodyNode.innerHTML = "";
+
+        try {
+          const response = await fetch(detailUrl, {
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+            credentials: "same-origin",
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          const payload = await response.json();
+          if (titleNode) titleNode.textContent = `Route ${payload.route_nummer || routeNummer}`;
+          if (subtitleNode) subtitleNode.textContent = payload.route_date || routeDate;
+          if (headNode) {
+            headNode.innerHTML = `<tr>${(payload.headers || []).map((header) => `<th>${header}</th>`).join("")}</tr>`;
+          }
+          if (bodyNode) {
+            const rows = payload.rows || [];
+            if (!rows.length) {
+              bodyNode.innerHTML = `<tr><td colspan="${(payload.headers || []).length || 1}" class="text-center text-light-emphasis">Geen ritdetails gevonden.</td></tr>`;
+            } else {
+              bodyNode.innerHTML = rows
+                .map((detailRow) => `<tr>${detailRow.map((value) => `<td>${value ?? ""}</td>`).join("")}</tr>`)
+                .join("");
+            }
+          }
+          initReportTableSorting();
+        } catch (_error) {
+          if (errorNode) {
+            errorNode.textContent = "Ritdetails konden niet worden geladen.";
+            errorNode.classList.remove("d-none");
+          }
+        } finally {
+          if (loadingNode) {
+            loadingNode.classList.add("d-none");
+          }
+        }
+      });
+    });
+  };
+
+  initControl5RouteModal();
+
   document.querySelectorAll(".auto-dismiss-alert").forEach((alertNode) => {
     window.setTimeout(() => {
       alertNode.remove();
@@ -406,6 +504,171 @@ const initDashboardPage = () => {
             y: {
               ticks: { color: "#edf6ff" },
               grid: { color: "rgba(255,255,255,0.08)" },
+            },
+          },
+        },
+      });
+    }
+  }
+
+  const control13ChartNode = document.getElementById("control13AgeChart");
+  const control13LabelsNode = document.getElementById("control13-age-labels");
+  const control13ValuesNode = document.getElementById("control13-age-values");
+  if (control13ChartNode && control13LabelsNode && control13ValuesNode && typeof Chart !== "undefined") {
+    const labels = JSON.parse(control13LabelsNode.textContent || "[]");
+    const values = JSON.parse(control13ValuesNode.textContent || "[]");
+
+    if (labels.length) {
+      new Chart(control13ChartNode, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Aantal voertuigen",
+              data: values,
+              borderRadius: 8,
+              backgroundColor: "#8ecae6",
+              hoverBackgroundColor: "#b7e1f7",
+            },
+          ],
+        },
+        options: {
+          maintainAspectRatio: false,
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+          },
+          scales: {
+            x: {
+              ticks: { color: "#edf6ff" },
+              grid: { color: "rgba(255,255,255,0.08)" },
+              title: {
+                display: true,
+                text: "Leeftijd (jaren)",
+                color: "#edf6ff",
+              },
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { color: "#edf6ff" },
+              grid: { color: "rgba(255,255,255,0.08)" },
+              title: {
+                display: true,
+                text: "Aantal voertuigen",
+                color: "#edf6ff",
+              },
+            },
+          },
+        },
+      });
+    }
+  }
+
+  const control20ChartNode = document.getElementById("control20CostChart");
+  const control20LabelsNode = document.getElementById("control20-cost-labels");
+  const control20ValuesNode = document.getElementById("control20-cost-values");
+  if (control20ChartNode && control20LabelsNode && control20ValuesNode && typeof Chart !== "undefined") {
+    const labels = JSON.parse(control20LabelsNode.textContent || "[]");
+    const values = JSON.parse(control20ValuesNode.textContent || "[]");
+
+    if (labels.length) {
+      new Chart(control20ChartNode, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Kosten per rit",
+              data: values,
+              borderRadius: 8,
+              backgroundColor: "#4ecdc4",
+              hoverBackgroundColor: "#81e6dc",
+            },
+          ],
+        },
+        options: {
+          maintainAspectRatio: false,
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+          },
+          scales: {
+            x: {
+              ticks: { color: "#edf6ff" },
+              grid: { color: "rgba(255,255,255,0.08)" },
+              title: {
+                display: true,
+                text: "Datum",
+                color: "#edf6ff",
+              },
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { color: "#edf6ff" },
+              grid: { color: "rgba(255,255,255,0.08)" },
+              title: {
+                display: true,
+                text: "Kosten per rit",
+                color: "#edf6ff",
+              },
+            },
+          },
+        },
+      });
+    }
+  }
+
+  const control20MonthlyChartNode = document.getElementById("control20MonthlyCostChart");
+  const control20MonthlyLabelsNode = document.getElementById("control20-monthly-cost-labels");
+  const control20MonthlyValuesNode = document.getElementById("control20-monthly-cost-values");
+  if (control20MonthlyChartNode && control20MonthlyLabelsNode && control20MonthlyValuesNode && typeof Chart !== "undefined") {
+    const labels = JSON.parse(control20MonthlyLabelsNode.textContent || "[]");
+    const values = JSON.parse(control20MonthlyValuesNode.textContent || "[]");
+
+    if (labels.length) {
+      new Chart(control20MonthlyChartNode, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Gewogen gemiddelde kosten",
+              data: values,
+              borderColor: "#ffd166",
+              backgroundColor: "rgba(255, 209, 102, 0.2)",
+              pointBackgroundColor: "#ffd166",
+              pointRadius: 4,
+              tension: 0.25,
+              fill: true,
+            },
+          ],
+        },
+        options: {
+          maintainAspectRatio: false,
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+          },
+          scales: {
+            x: {
+              ticks: { color: "#edf6ff" },
+              grid: { color: "rgba(255,255,255,0.08)" },
+              title: {
+                display: true,
+                text: "Maand",
+                color: "#edf6ff",
+              },
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { color: "#edf6ff" },
+              grid: { color: "rgba(255,255,255,0.08)" },
+              title: {
+                display: true,
+                text: "Gewogen gemiddelde kosten per rit",
+                color: "#edf6ff",
+              },
             },
           },
         },

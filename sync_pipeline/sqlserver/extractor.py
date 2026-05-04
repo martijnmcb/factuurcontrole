@@ -203,6 +203,15 @@ def extract_routes_detail(
     return _extract_filtered_table(connection, "gecontroleerdeRoutesDetail", stuurtabel_ids, config, discovered_tables)
 
 
+def extract_kentallen_route(
+    connection,
+    stuurtabel_ids: Sequence[int],
+    config: DataSourceConfig | None = None,
+    discovered_tables: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    return _extract_filtered_table(connection, "kentallen_route", stuurtabel_ids, config, discovered_tables)
+
+
 def extract_va_ritten_detail(
     connection,
     stuurtabel_ids: Sequence[int],
