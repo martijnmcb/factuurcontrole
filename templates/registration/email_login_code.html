@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="nl">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verificatiecode Factuurcontrole</title>
+</head>
+<body style="margin:0; padding:0; background:#0b1620; font-family:Arial, sans-serif; color:#eaf2f8;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0b1620; padding:32px 16px;">
+        <tr>
+            <td align="center">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px; background:#122334; border:1px solid #2a465d; border-radius:16px; overflow:hidden;">
+                    <tr>
+                        <td style="padding:32px 32px 12px 32px;">
+                            <div style="font-size:12px; letter-spacing:0.16em; text-transform:uppercase; color:#ffd166; margin-bottom:12px;">
+                                Factuurcontrole
+                            </div>
+                            <h1 style="margin:0 0 12px 0; font-size:28px; line-height:1.2; color:#f7fbff;">
+                                Je verificatiecode
+                            </h1>
+                            <p style="margin:0; font-size:16px; line-height:1.6; color:#d6e3ee;">
+                                Hallo {{ user.get_username }}, er is een inlogpoging gedaan voor Factuurcontrole.
+                                Gebruik onderstaande code om je login af te ronden.
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:24px 32px;">
+                            <div style="background:linear-gradient(135deg, #ffd166, #ff7b54); color:#08131d; font-size:34px; font-weight:700; letter-spacing:0.22em; text-align:center; border-radius:14px; padding:20px 16px;">
+                                {{ code }}
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0 32px 32px 32px;">
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0f1d2b; border:1px solid #22384a; border-radius:12px;">
+                                <tr>
+                                    <td style="padding:18px 20px; font-size:14px; line-height:1.7; color:#c4d6e4;">
+                                        <strong style="color:#f7fbff;">Belangrijk</strong><br>
+                                        Deze code is <strong>{{ expiry_minutes }} minuten</strong> geldig en kan eenmalig worden gebruikt.<br>
+                                        Heb je deze login niet zelf gestart, dan kun je deze e-mail negeren.
+                                    </td>
+                                </tr>
+                            </table>
+                            <p style="margin:20px 0 0 0; font-size:13px; line-height:1.6; color:#9fb4c5;">
+                                Met vriendelijke groet,<br>
+                                Factuurcontrole
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

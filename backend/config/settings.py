@@ -117,6 +117,17 @@ STATIC_ROOT = PROJECT_DIR / "staticfiles"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = PROJECT_DIR / "media"
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@factuurcontrole.local")
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = os.getenv("EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "25"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "False").lower() == "true"
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False").lower() == "true"
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
+EMAIL_SSL_CERTFILE = os.getenv("EMAIL_SSL_CERTFILE") or None
+EMAIL_SSL_KEYFILE = os.getenv("EMAIL_SSL_KEYFILE") or None
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "accounts.User"

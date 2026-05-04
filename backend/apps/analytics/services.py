@@ -1942,6 +1942,134 @@ class DuckDBAnalyticsService:
         ]
         return summary, chart_points, table_data, monthly_chart_points
 
+    def get_control_1006_report(self, client_slug: str, stuurtabel_id: int | None = None):
+        va_glob = self._dataset_glob(client_slug, "va_ritten_detail")
+        if not self._table_exists(va_glob):
+            return {
+                "total_checked": 0,
+                "vehicles": 0,
+                "coverage_percentage": 0.0,
+                "average_age": None,
+            }, [], {"inzetdagen": 0, "passagiers": 0}, []
+
+        filter_sql = self._run_filter_sql(stuurtabel_id)
+        with self.connect() as conn:
+            summary_row = conn.execute(
+                f"""
+                WITH base AS (
+                    SELECT
+                        kenteken,
+                        controlewaarde_1006
+                    FROM read_parquet('{va_glob}')
+                    WHERE kenteken IS NOT NULL
+                      AND TRIM(kenteken) <> ''
+                      AND (
+                        controlewaarde_1006 IS NOT NULL
+                        OR dempelwaarde_1006 IS NOT NULL
+                        OR resultaat_1006 IS NOT NULL
+                        OR tekst_1006 IS NOT NULL
+                      )
+                      {filter_sql}
+                )
+                SELECT
+                    COUNT(*) AS total_checked,
+                    COUNT(DISTINCT kenteken) AS total_vehicles,
+                    COUNT(DISTINCT CASE WHEN controlewaarde_1006 IS NOT NULL THEN kenteken END) AS vehicles_with_age,
+                    AVG(TRY_CAST(controlewaarde_1006 AS DOUBLE)) AS average_age
+                FROM base
+                """
+            ).fetchone()
+
+            rows = conn.execute(
+                f"""
+                WITH base AS (
+                    SELECT
+                        kenteken,
+                        CAST(rit_datum AS DATE) AS ritdatum,
+                        dempelwaarde_1006,
+                        controlewaarde_1006,
+                        tekst_1006
+                    FROM read_parquet('{va_glob}')
+                    WHERE kenteken IS NOT NULL
+                      AND TRIM(kenteken) <> ''
+                      AND (
+                        controlewaarde_1006 IS NOT NULL
+                        OR dempelwaarde_1006 IS NOT NULL
+                        OR resultaat_1006 IS NOT NULL
+                        OR tekst_1006 IS NOT NULL
+                      )
+                      {filter_sql}
+                )
+                SELECT
+                    kenteken,
+                    COUNT(DISTINCT ritdatum) AS inzetdagen,
+                    COUNT(*) AS vervoerde_passagiers,
+                    MAX(dempelwaarde_1006) AS drempelwaarde,
+                    MAX(controlewaarde_1006) AS controlewaarde,
+                    '' AS voertuigtype,
+                    COALESCE(MAX(tekst_1006), '') AS inrichting
+                FROM base
+                GROUP BY kenteken
+                ORDER BY kenteken
+                """
+            ).fetchall()
+
+            age_distribution_rows = conn.execute(
+                f"""
+                WITH vehicle_age AS (
+                    SELECT
+                        kenteken,
+                        ROUND(AVG(TRY_CAST(controlewaarde_1006 AS DOUBLE))) AS age_years
+                    FROM read_parquet('{va_glob}')
+                    WHERE kenteken IS NOT NULL
+                      AND TRIM(kenteken) <> ''
+                      AND controlewaarde_1006 IS NOT NULL
+                      {filter_sql}
+                    GROUP BY kenteken
+                )
+                SELECT
+                    CAST(age_years AS INTEGER) AS age_years,
+                    COUNT(*) AS vehicles
+                FROM vehicle_age
+                WHERE age_years IS NOT NULL
+                GROUP BY 1
+                ORDER BY 1
+                """
+            ).fetchall()
+
+        report_rows = [
+            {
+                "kenteken": row[0] or "",
+                "inzetdagen": row[1] or 0,
+                "vervoerde_passagiers": row[2] or 0,
+                "drempelwaarde": self._float_or_none(row[3]),
+                "controlewaarde": self._float_or_none(row[4]),
+                "type": row[5] or "",
+                "inrichting": row[6] or "",
+            }
+            for row in rows
+        ]
+        totals = {
+            "inzetdagen": sum(row["inzetdagen"] for row in report_rows),
+            "passagiers": sum(row["vervoerde_passagiers"] for row in report_rows),
+        }
+        total_checked = int(summary_row[0] or 0)
+        total_vehicles = int(summary_row[1] or 0)
+        vehicles_with_age = int(summary_row[2] or 0)
+        average_age = self._float_or_none(summary_row[3])
+        summary = {
+            "total_checked": total_checked,
+            "vehicles": total_vehicles,
+            "coverage_percentage": round((100.0 * vehicles_with_age / total_vehicles), 2) if total_vehicles else 0.0,
+            "average_age": average_age,
+        }
+        age_distribution = [
+            {"label": str(int(row[0])), "value": int(row[1] or 0)}
+            for row in age_distribution_rows
+            if row[0] is not None
+        ]
+        return summary, report_rows, totals, age_distribution
+
     def get_generic_control_report(
         self,
         client_slug: str,

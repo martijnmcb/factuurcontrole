@@ -7,7 +7,7 @@ from copy import deepcopy
 
 from apps.clients.models import Client, ClientAccess
 
-from .models import User
+from .models import EmailLoginCode, User
 
 
 class ClientAccessAdminFormMixin:
@@ -96,3 +96,14 @@ class UserAdmin(DjangoUserAdmin):
         super().save_related(request, form, formsets, change)
         if hasattr(form, "sync_clients"):
             form.sync_clients()
+
+
+@admin.register(EmailLoginCode)
+class EmailLoginCodeAdmin(admin.ModelAdmin):
+    list_display = ("user", "created_at", "expires_at", "attempts", "consumed_at")
+    list_filter = ("consumed_at", "created_at", "expires_at")
+    search_fields = ("user__username", "user__email")
+    readonly_fields = ("user", "code_hash", "created_at", "updated_at", "expires_at", "attempts", "consumed_at")
+
+    def has_add_permission(self, request):
+        return False

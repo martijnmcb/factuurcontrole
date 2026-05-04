@@ -377,7 +377,7 @@ class ClientContextMixin(LoginRequiredMixin):
             for row in distance_rows:
                 rows.append(("Afgelegde reizigers kilometers per brandstoftype", row["fuel_type"], *["" for _ in fuel_types], row["distance"], f'{row["percentage"]}%'))
             return {"summary": summary, "headers": headers, "rows": rows, "title": title}
-        if control_id in {2, 3, 7, 9, 12, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1006, 1007, 1008}:
+        if control_id in {2, 3, 7, 9, 12, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1007, 1008}:
             summary, headers, rows, _ = analytics.get_generic_control_report(
                 client_slug,
                 selected_run_id,
@@ -814,6 +814,23 @@ class ControlReportView(ClientContextMixin, TemplateView):
             ]
             rows.append(("Totaal", totals["inzetdagen"], totals["passagiers"], "", "", "", ""))
             return self._respond_export(f"{client.slug}-control-13-{selected_run_id}", headers, rows, "Control 13")
+        if control_id == 1006:
+            _summary, report_rows, totals, _age_distribution = analytics.get_control_1006_report(client.slug, selected_run_id)
+            headers = ["Kenteken", "Inzetdagen", "Vervoerde passagiers", "Drempelwaarde", "Controlewaarde", "Type", "inrichting"]
+            rows = [
+                (
+                    row["kenteken"],
+                    row["inzetdagen"],
+                    row["vervoerde_passagiers"],
+                    row["drempelwaarde"],
+                    row["controlewaarde"],
+                    row["type"],
+                    row["inrichting"],
+                )
+                for row in report_rows
+            ]
+            rows.append(("Totaal", totals["inzetdagen"], totals["passagiers"], "", "", "", ""))
+            return self._respond_export(f"{client.slug}-control-1006-{selected_run_id}", headers, rows, "Control 1006")
         if control_id == 20:
             _summary, _chart_points, table_rows, _monthly_chart_points = analytics.get_control_20_report(client.slug, selected_run_id)
             headers = ["Datum", "Aantal ritten", "Gewogen kosten per rit"]
@@ -875,6 +892,8 @@ class ControlReportView(ClientContextMixin, TemplateView):
             return ["dashboards/control_12_report.html"]
         if int(self.kwargs["control_id"]) == 13:
             return ["dashboards/control_13_report.html"]
+        if int(self.kwargs["control_id"]) == 1006:
+            return ["dashboards/control_13_report.html"]
         if int(self.kwargs["control_id"]) == 20:
             return ["dashboards/control_20_report.html"]
         if int(self.kwargs["control_id"]) == 1004:
@@ -899,7 +918,7 @@ class ControlReportView(ClientContextMixin, TemplateView):
         context["selected_run_id"] = selected_run_id
         context["control_id"] = control_id
         definition = analytics.get_control_definition(control_id)
-        context["implemented"] = control_id in {1, 4, 8, 10, 11, 12, 13, 20, 1004, 1005} or control_id in {2, 3, 5, 7, 9, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1006, 1007, 1008}
+        context["implemented"] = control_id in {1, 4, 8, 10, 11, 12, 13, 20, 1004, 1005, 1006} or control_id in {2, 3, 5, 7, 9, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1007, 1008}
         executed_controls = [control for control in analytics.get_executed_controls(client.slug, selected_run_id) if control.control_id is not None]
         executed_control_ids = [int(control.control_id) for control in executed_controls]
         executed_control_description = self.get_executed_control_description(executed_controls, control_id)
@@ -1068,6 +1087,23 @@ class ControlReportView(ClientContextMixin, TemplateView):
                 "Overzicht per kenteken van inzetdagen, vervoerde passagiers en de controlewaarden voor deze controle.",
             )
             context["template_variant"] = "control_13"
+        elif control_id == 1006:
+            summary, report_rows, totals, age_distribution = analytics.get_control_1006_report(client.slug, selected_run_id)
+            context["summary"] = summary
+            context["report_rows"] = report_rows
+            context["totals"] = totals
+            context["age_chart_labels"] = [row["label"] for row in age_distribution]
+            context["age_chart_values"] = [row["value"] for row in age_distribution]
+            self.apply_control_content(
+                context,
+                analytics,
+                control_id,
+                selected_soortvervoer,
+                executed_control_description,
+                "Controle 1006 - Leeftijd voertuigen VA ritten",
+                "Overzicht per kenteken van inzetdagen, vervoerde passagiers en voertuigleeftijd voor VA-ritten.",
+            )
+            context["template_variant"] = "control_13"
         elif control_id == 20:
             summary, chart_points, table_rows, monthly_chart_points = analytics.get_control_20_report(client.slug, selected_run_id)
             context["summary"] = summary
@@ -1126,7 +1162,7 @@ class ControlReportView(ClientContextMixin, TemplateView):
                 "Overzicht van VA-voertuiginzet per brandstofsoort, uitgesplitst naar ISO-week, aantal ritten en afgelegde reizigers kilometers.",
             )
             context["template_variant"] = "control_1005"
-        elif control_id in {2, 3, 5, 7, 9, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1006, 1007, 1008}:
+        elif control_id in {2, 3, 5, 7, 9, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 1001, 1002, 1003, 1007, 1008}:
             summary, headers, rows, total_rows = analytics.get_generic_control_report(
                 client.slug,
                 selected_run_id,
