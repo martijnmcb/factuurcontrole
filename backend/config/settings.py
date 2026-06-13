@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -27,6 +28,11 @@ if not CSRF_TRUSTED_ORIGINS and DEBUG:
 USE_X_FORWARDED_HOST = os.getenv("USE_X_FORWARDED_HOST", "True").lower() == "true"
 USE_X_FORWARDED_PORT = os.getenv("USE_X_FORWARDED_PORT", "True").lower() == "true"
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", os.getenv("SECURE_PROXY_SSL_HEADER_VALUE", "https"))
+
+if not DEBUG and SECRET_KEY == "unsafe-dev-secret-key":
+    raise ImproperlyConfigured("SECRET_KEY must be set explicitly when DEBUG=False.")
+if not DEBUG and not ALLOWED_HOSTS:
+    raise ImproperlyConfigured("ALLOWED_HOSTS must be set when DEBUG=False.")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -134,6 +140,20 @@ AUTH_USER_MODEL = "accounts.User"
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "dashboard_home"
 LOGOUT_REDIRECT_URL = "login"
+
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = "Lax"
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").lower() == "true"
+SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0" if DEBUG else "3600"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "False").lower() == "true"
+SECURE_HSTS_PRELOAD = os.getenv("SECURE_HSTS_PRELOAD", "False").lower() == "true"
 
 DATA_DIR = (PROJECT_DIR / os.getenv("DATA_DIR", "data")).resolve()
 DUCKDB_PATH = (BASE_DIR / os.getenv("DUCKDB_PATH", "../data/analytics.duckdb")).resolve()

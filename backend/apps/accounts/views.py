@@ -25,7 +25,7 @@ EMAIL_CODE_RESEND_SECONDS = 60
 
 
 def user_requires_email_2fa(user: User) -> bool:
-    return bool(user.is_superuser or user.is_staff or user.role == "admin")
+    return True
 
 
 def clear_pending_2fa_session(request) -> None:
